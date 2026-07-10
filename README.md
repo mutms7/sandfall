@@ -37,6 +37,11 @@ python -m http.server 8123 -d .
 - **1–0** select elements, **g** selects life, **e** selects the eraser
 - **[** and **]** shrink and grow the brush
 - **Space** pauses, **.** advances one frame, **c** clears the world
+- **Life preset** dropdown loads a classic Game of Life pattern; then **click the canvas** to stamp it (click as many times as you like). Picking any element leaves stamp mode.
+
+### Life presets
+
+Spaceships (glider, lightweight spaceship) that travel, oscillators (toad, beacon, pulsar, pentadecathlon) that loop forever, the endlessly-firing Gosper glider gun, and two methuselahs (R-pentomino, acorn) that erupt into chaos for thousands of generations before settling. Patterns stamp into empty air only, so they won't erase your terrain.
 
 ## Things worth trying
 

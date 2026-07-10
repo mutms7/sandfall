@@ -369,6 +369,7 @@ function paintLine(x0, y0, x1, y1, elem) {
 }
 
 let painting = false, strokeElement = E.SAND, lastX = 0, lastY = 0;
+let pastePattern = null; // active Game-of-Life preset, stamped on left-click
 
 function canvasCoords(ev) {
   const rect = canvas.getBoundingClientRect();
@@ -378,13 +379,31 @@ function canvasCoords(ev) {
   ];
 }
 
+// drop a preset centered on (cx, cy), into empty air only so terrain survives
+function stampPattern(cx, cy, coords) {
+  let maxX = 0, maxY = 0;
+  for (const [dx, dy] of coords) { if (dx > maxX) maxX = dx; if (dy > maxY) maxY = dy; }
+  const ox = cx - (maxX >> 1), oy = cy - (maxY >> 1);
+  for (const [dx, dy] of coords) {
+    const x = ox + dx, y = oy + dy;
+    if (x < 0 || x >= W || y < 0 || y >= H) continue;
+    const i = idx(x, y);
+    if (cells[i] === E.EMPTY) setCell(i, E.LIFE);
+  }
+}
+
 canvas.addEventListener("pointerdown", (ev) => {
   ev.preventDefault();
   canvas.setPointerCapture(ev.pointerId);
+  const [x, y] = canvasCoords(ev);
+  if (pastePattern && ev.button === 0) { // stamp the preset, no drag-paint
+    stampPattern(x, y, pastePattern);
+    return;
+  }
   painting = true;
   strokeElement = ev.button === 2 ? ERASER : currentElement;
-  [lastX, lastY] = canvasCoords(ev);
-  paintLine(lastX, lastY, lastX, lastY, strokeElement);
+  lastX = x; lastY = y;
+  paintLine(x, y, x, y, strokeElement);
 });
 
 canvas.addEventListener("pointermove", (ev) => {
@@ -435,9 +454,16 @@ for (const { e, label, key } of PALETTE) {
   buttons.set(e, btn);
 }
 
+function highlightButton(e) {
+  for (const [id, btn] of buttons) btn.classList.toggle("selected", id === e);
+}
+
 function selectElement(e) {
   currentElement = e;
-  for (const [id, btn] of buttons) btn.classList.toggle("selected", id === e);
+  pastePattern = null; // choosing an element leaves preset-stamp mode
+  const dd = document.getElementById("life-preset");
+  if (dd) dd.value = "";
+  highlightButton(e);
 }
 selectElement(E.SAND);
 
@@ -503,6 +529,50 @@ function placePattern(ox, oy, coords, e) {
     setCell(idx(x, y), e);
   }
 }
+
+// Classic Game-of-Life patterns, offered in the "life preset" dropdown.
+const PRESETS = {
+  glider: { label: "glider", cells: [[1, 0], [2, 1], [0, 2], [1, 2], [2, 2]] },
+  lwss: {
+    label: "lightweight spaceship",
+    cells: [[1, 0], [4, 0], [0, 1], [0, 2], [4, 2], [0, 3], [1, 3], [2, 3], [3, 3]],
+  },
+  toad: { label: "toad (blinks)", cells: [[1, 0], [2, 0], [3, 0], [0, 1], [1, 1], [2, 1]] },
+  beacon: { label: "beacon (blinks)", cells: [[0, 0], [1, 0], [0, 1], [1, 1], [2, 2], [3, 2], [2, 3], [3, 3]] },
+  pulsar: {
+    label: "pulsar",
+    cells: [
+      [2, 0], [3, 0], [4, 0], [8, 0], [9, 0], [10, 0],
+      [0, 2], [5, 2], [7, 2], [12, 2], [0, 3], [5, 3], [7, 3], [12, 3], [0, 4], [5, 4], [7, 4], [12, 4],
+      [2, 5], [3, 5], [4, 5], [8, 5], [9, 5], [10, 5],
+      [2, 7], [3, 7], [4, 7], [8, 7], [9, 7], [10, 7],
+      [0, 8], [5, 8], [7, 8], [12, 8], [0, 9], [5, 9], [7, 9], [12, 9], [0, 10], [5, 10], [7, 10], [12, 10],
+      [2, 12], [3, 12], [4, 12], [8, 12], [9, 12], [10, 12],
+    ],
+  },
+  pentadecathlon: {
+    label: "pentadecathlon",
+    cells: [[2, 0], [7, 0], [0, 1], [1, 1], [3, 1], [4, 1], [5, 1], [6, 1], [8, 1], [9, 1], [2, 2], [7, 2]],
+  },
+  gun: { label: "Gosper glider gun", cells: GLIDER_GUN },
+  rpentomino: { label: "R-pentomino (chaos)", cells: [[1, 0], [2, 0], [0, 1], [1, 1], [1, 2]] },
+  acorn: { label: "acorn (chaos)", cells: [[1, 0], [3, 1], [0, 2], [1, 2], [4, 2], [5, 2], [6, 2]] },
+};
+
+const lifePresetSelect = document.getElementById("life-preset");
+for (const [key, preset] of Object.entries(PRESETS)) {
+  const opt = document.createElement("option");
+  opt.value = key;
+  opt.textContent = preset.label;
+  lifePresetSelect.appendChild(opt);
+}
+lifePresetSelect.addEventListener("change", () => {
+  const key = lifePresetSelect.value;
+  if (!key) { pastePattern = null; highlightButton(currentElement); return; }
+  pastePattern = PRESETS[key].cells;
+  currentElement = E.LIFE;
+  highlightButton(E.LIFE);
+});
 
 function seedWorld() {
   // sand dunes, bottom-left

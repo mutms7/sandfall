@@ -17,6 +17,12 @@
     <div id="toolbar">
       <div id="palette"></div>
       <div id="controls">
+        <label class="preset-label">
+          <span>life</span>
+          <select id="life-preset" title="Load a Game of Life pattern, then click the canvas to stamp it">
+            <option value="">paste pattern&hellip;</option>
+          </select>
+        </label>
         <label class="brush-label">
           brush <span id="brush-size-value">4</span>
           <input type="range" id="brush-size" min="1" max="16" value="4" />
@@ -31,7 +37,7 @@
       <canvas id="world"></canvas>
       <div id="hud">
         <span id="fps"></span>
-        <span id="hint">left-drag: paint &middot; right-drag: erase &middot; 1&ndash;0: elements &middot; g: life &middot; e: erase &middot; [ ]: brush &middot; space: pause</span>
+        <span id="hint">left-drag: paint &middot; right-drag: erase &middot; 1&ndash;0: elements &middot; g: life &middot; life preset &rarr; click to stamp &middot; [ ]: brush &middot; space: pause</span>
       </div>
     </div>
   </main>
