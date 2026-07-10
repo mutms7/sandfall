@@ -31,22 +31,27 @@ python -m http.server 8123 -d .
 | **acid** | Eats sand, stone, plants, oil, and ice. Water dilutes it. Walls and glass resist it. |
 | **ice** | Static. Slowly freezes neighboring water, melts near fire and lava. |
 | **life** | Floats in place and evolves by [Conway's Game of Life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life). Births need empty air, so terrain, water and sand are walls that gliders shatter against. Fragile: fire, lava and acid destroy it. New cells glow bright cyan, aging to deep teal. |
+| tunnel supports | Diggers leave wooden roof and floor bracing behind them. It stops loose sand and stone from collapsing into a tunnel, but fire and acid can destroy it. |
 | smoke / steam / glass | Byproducts. Smoke dissipates, steam rises and sometimes condenses back into rain, glass is what lava leaves behind in sand. |
 
 ## People
 
 Two tools open a little dropdown menu right off the button itself: **life** and **people**. Click one and the menu appears anchored to it.
 
-The **people** aren't cells, they're small agents that walk the terrain, obey gravity, stand on solid ground, step up small ledges, and get poofed into smoke if they touch fire or lava. Six kinds, each with its own personality:
+The **people** aren't cells, they're small agents that walk the terrain, obey gravity, stand on solids (including Game of Life cells), track moving material beneath their feet, and manage health and oxygen. Deep water eventually drowns them, being completely buried suffocates them, and long drops hurt. Fatal falls slump a figure over, lava and fire burn it away, and drowning leaves a fading blue ghost.
 
 | Kind | Behavior |
 | --- | --- |
-| **wanderer** | The everyman. Hops in place and drifts around a little. |
-| **adventurer** | Roams far and fearless, vaulting over walls and gaps as it goes. |
-| **platformer** | Hunts for ledges within jump range and leaps up onto them, climbing a staircase step by step. |
-| **daredevil** | Launches into huge arcing leaps across the screen, no self-preservation. |
-| **digger** | Tunnels straight through sand, plant and stone, carving a person-height hole. |
-| **swimmer** | Seeks out the nearest water, dives in, and paddles around at the surface. |
+| **wanderer** | The everyman. Alternates between a little walk or hop and standing around to watch the world. |
+| **adventurer** | Roams in bursts, vaulting walls and gaps, then pauses before setting off again. |
+| **platformer** | Chooses a genuinely lateral landing, solves a compact ballistic arc, and varies between several arc shapes. Recent platforms stay in memory so it does not bounce in the same two-stop loop. Its reach and launch power are roughly half the original long-jump version. |
+| **daredevil** | No longer jumps. It plans a safe coarse-grid route to a distant landing, then follows it with powered lift, partial gravity, changing speed, banking, and swooping. It replans around new obstacles; an actual high-speed impact is fatal. |
+| **digger** | Sometimes begins with a straight vertical shaft, braces its sides, cuts a small junction, then grows narrow horizontal branches. Every branch gets a continuous wooden platform above and below instead of becoming a broad excavated cavity. |
+| **swimmer** | Seeks out water and paddles at the surface. It can hold its breath much longer than everyone else, but can still drown. |
+
+Ice has almost no stopping friction: a person can finish walking and keep sliding in the same direction until terrain, friction, or a new decision changes the motion. Ordinary ground brings them to a stop.
+
+There are a few quieter cross-system surprises too: people flee nearby fire, plants make enclosed pockets breathable, hard landings kick loose sand aside, and moving footsteps on Life platforms can leave a rare newborn cell. Life platforms also cushion fall damage and carry a rider as their pattern shifts.
 
 Pick a kind from the menu, then **click or drag** on the canvas to drop people (a drag sprinkles a trail of them). Right-drag removes them along with terrain. The live count sits in the corner.
 
@@ -73,9 +78,11 @@ Spaceships (glider, lightweight spaceship) that travel, oscillators (toad, beaco
 - Pause (space), paint your own Game of Life pattern with **g**, then tap **.** to step through generations one at a time.
 - Set a plant garden on fire directly beneath the gun and watch the two automata (chemistry and Conway) run side by side.
 - Drop a crowd of **wanderers** on the dunes, then pour water beside them and add a couple of **swimmers**. Watch who goes where.
-- Set a **digger** loose on a tall sand dune and let it carve tunnels the sand keeps trying to collapse.
-- Build a staircase out of **wall** and drop a **platformer** at the bottom, then see if it can climb to the top.
-- Spawn **daredevils** near the lava shelf. It does not end well for them, and that's the fun.
+- Set a **digger** loose on a tall sand dune and watch a narrow shaft open into paired, braced ant-tunnel branches. Burn the wooden bracing afterward if you want the cave-in after all.
+- Scatter several nearby platforms and drop a **platformer** on one. It varies its compact arcs and remembers where it has just been instead of repeating a two-platform cycle.
+- Spawn **daredevils** beside a wall and watch them bank and swoop around it, slow for a deliberate landing, and loiter before flying again. Add a wall mid-flight to test their replanning—or their impact tolerance.
+- Make a moving Life spaceship wide enough to stand on and place a person above it. Riders follow the shifting cells until the pattern breaks apart beneath them.
+- Build a sealed room with and without a plant, then bury people inside to see the difference in breathable space.
 
 ## How it works
 
@@ -83,6 +90,6 @@ The world is a flat `Uint8Array`, one element id per cell, updated bottom-up onc
 
 The `life` element is the exception to the in-place scan: Conway's Game of Life demands a *simultaneous* update, so it runs as its own pass every few frames, counting live neighbors from the current grid into a scratch buffer and then applying births and deaths all at once. It reuses the per-cell `life` byte as a cell's age, which drives the color gradient from newborn white-cyan to aged teal.
 
-The **people** are the other exception. They're not cells at all, just a list of little agents with floating-point positions and velocities. Each frame they read the grid for collision (gravity, ground, single-cell step-ups), run a small type-specific decision (roam, hunt a ledge, tunnel, seek water...), and then get painted as three-pixel figures directly over the finished world buffer. So the cellular automaton and the agents share one grid but never step on each other.
+The **people** are the other exception. They're not cells at all, just a list of little agents with floating-point positions, velocities, oxygen, health, support tracking, and role-specific state. Each frame they read the grid, make a decision, run swept collision so jumps and flights cannot skip thin platforms, react to hazards, and get painted directly over the finished world buffer. Platformers rank nearby destinations with recent-platform memory and select among multiple compact ballistic solutions. Daredevils run a coarse A* search, retain short waypoints, and use inertial steering plus gravity to curve through the safe corridor; the same swept check turns fast impacts into deaths. Diggers alternate supported vertical shafts, small junction chambers, and paired-beam horizontal branches. Short-lived death records render the cause-specific animations after an agent is removed.
 
 The **logo** is a completely separate miniature falling-sand sim. A 5x7 bitmap font marks out which pixels each letter needs; every one of those becomes a grain that rains down into place, colored and shimmering by whichever ingredient that letter is made of. Once the whole word has landed it holds for a few seconds, then the grains let go and fall away, and it rebuilds itself, forever.

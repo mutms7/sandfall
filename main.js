@@ -13,7 +13,7 @@ const N = W * H;
 const E = {
   EMPTY: 0, WALL: 1, SAND: 2, WATER: 3, OIL: 4, FIRE: 5, SMOKE: 6,
   STEAM: 7, PLANT: 8, LAVA: 9, STONE: 10, ACID: 11, ICE: 12, GLASS: 13,
-  LIFE: 14,
+  LIFE: 14, SUPPORT: 15,
 };
 const ERASER = -1;
 const PEOPLE = 100; // a tool sentinel, never stored in the cell grid
@@ -36,11 +36,13 @@ const DENSITY = new Uint8Array(16);
 DENSITY[E.OIL] = 2; DENSITY[E.WATER] = 3; DENSITY[E.ACID] = 3; DENSITY[E.LAVA] = 4;
 const DISSOLVES = new Uint8Array(16); // what acid can eat
 DISSOLVES[E.SAND] = DISSOLVES[E.STONE] = DISSOLVES[E.PLANT] =
-  DISSOLVES[E.OIL] = DISSOLVES[E.ICE] = DISSOLVES[E.LIFE] = 1;
+  DISSOLVES[E.OIL] = DISSOLVES[E.ICE] = DISSOLVES[E.LIFE] =
+  DISSOLVES[E.SUPPORT] = 1;
 // what the people can stand on / bump into
 const SOLID_P = new Uint8Array(16);
 SOLID_P[E.WALL] = SOLID_P[E.SAND] = SOLID_P[E.STONE] =
-  SOLID_P[E.GLASS] = SOLID_P[E.PLANT] = SOLID_P[E.ICE] = 1;
+  SOLID_P[E.GLASS] = SOLID_P[E.PLANT] = SOLID_P[E.ICE] =
+  SOLID_P[E.LIFE] = SOLID_P[E.SUPPORT] = 1;
 
 const NEIGHBORS4 = [[0, -1], [0, 1], [-1, 0], [1, 0]];
 const NEIGHBORS8 = [[0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]];
@@ -131,6 +133,7 @@ function updateFire(x, y, i) {
     }
     if (t === E.PLANT && Math.random() < 0.10) setCell(j, E.FIRE, 30 + Math.random() * 30);
     else if (t === E.OIL && Math.random() < 0.35) setCell(j, E.FIRE, 25 + Math.random() * 25);
+    else if (t === E.SUPPORT && Math.random() < 0.045) setCell(j, E.FIRE, 35 + Math.random() * 35);
     else if (t === E.ICE && Math.random() < 0.3) setCell(j, E.WATER);
     else if (t === E.LIFE) setCell(j, Math.random() < 0.5 ? E.SMOKE : E.EMPTY, 10 + Math.random() * 10);
   }
@@ -189,7 +192,7 @@ function updateLava(x, y, i) {
       return;
     }
     if (t === E.SAND && Math.random() < 0.02) setCell(j, E.GLASS);
-    else if ((t === E.PLANT || t === E.OIL) && Math.random() < 0.4) setCell(j, E.FIRE, 30 + Math.random() * 30);
+    else if ((t === E.PLANT || t === E.OIL || t === E.SUPPORT) && Math.random() < 0.4) setCell(j, E.FIRE, 30 + Math.random() * 30);
     else if (t === E.ICE && Math.random() < 0.5) setCell(j, E.WATER);
     else if (t === E.LIFE) setCell(j, E.FIRE, 15 + Math.random() * 15);
   }
@@ -290,43 +293,52 @@ function step() {
 const PTYPES = {
   wanderer: {
     label: "wanderer", color: [212, 216, 226],
-    desc: "hops in place and drifts around a little",
+    desc: "takes a short stroll or hop, then pauses",
   },
   adventurer: {
     label: "adventurer", color: [226, 150, 66],
-    desc: "roams far and fearless, vaults walls and gaps",
+    desc: "roams in bursts and vaults walls and gaps",
   },
   platformer: {
     label: "platformer", color: [86, 210, 112],
-    desc: "hunts for ledges and hops up onto them",
+    desc: "mixes smaller arcs and avoids repeating recent platforms",
   },
   daredevil: {
     label: "daredevil", color: [228, 74, 58],
-    desc: "launches into huge arcing leaps, no fear",
+    desc: "pathfinds through curved, gravity-driven flights",
   },
   digger: {
     label: "digger", color: [216, 178, 74],
-    desc: "tunnels straight through sand and stone",
+    desc: "builds narrow ant shafts with braced branch platforms",
   },
   swimmer: {
     label: "swimmer", color: [70, 202, 226],
-    desc: "seeks out water and paddles at the surface",
+    desc: "seeks water, paddles, and holds its breath longer",
   },
 };
 
 const MAX_PEOPLE = 400;
 const people = [];
-const GRAV = 0.05, MAXV = 1.7;
+const deaths = [];
+const GRAV = 0.05, MAX_FALL = 2.5, MAX_RISE = 3.2;
 
 let peopleType = "wanderer";
 
 function spawnPerson(x, y, type) {
   if (people.length >= MAX_PEOPLE) return;
+  const oxygenMax = type === "swimmer" ? 360 : 210;
+  const shaftFirst = type === "digger" && Math.random() < 0.58;
   people.push({
     x, y, vx: 0, vy: 0, type,
     dir: Math.random() < 0.5 ? -1 : 1,
-    t: (Math.random() * 120) | 0, next: 0, onGround: false, blocked: false,
+    t: (Math.random() * 120) | 0, next: 20 + Math.random() * 80,
+    onGround: false, blocked: false, desiredVx: null, walkUntil: 0,
     seed: (Math.random() * 255) | 0,
+    hp: 100, hurt: 0, oxygen: oxygenMax, oxygenMax,
+    airPeak: y, support: null, target: null, flight: null,
+    jumpHistory: [], jumpCount: 0, lastJumpDir: 0,
+    digMode: shaftFirst ? "shaft" : "level", digStartY: y,
+    digDepth: shaftFirst ? 12 + Math.random() * 18 : 0, digStarted: false,
   });
 }
 
@@ -344,6 +356,26 @@ function solidP(x, y) {
   return SOLID_P[cells[y * W + x]];
 }
 
+function bodyClear(x, y) {
+  return !solidP(x, y) && !solidP(x, y - 1) && !solidP(x, y - 2);
+}
+
+function dangerousCell(c) {
+  return c === E.FIRE || c === E.LAVA || c === E.ACID;
+}
+
+function safeLanding(x, y) {
+  if (x < 2 || x >= W - 2 || y < 3 || y >= H - 1) return false;
+  if (!solidP(x, y + 1) || !bodyClear(x, y)) return false;
+  if (cellAt(x, y) === E.WATER || cellAt(x, y - 1) === E.WATER || cellAt(x, y - 2) === E.WATER) return false;
+  for (let oy = -2; oy <= 1; oy++) {
+    for (let ox = -2; ox <= 2; ox++) {
+      if (dangerousCell(cellAt(x + ox, y + oy))) return false;
+    }
+  }
+  return true;
+}
+
 // horizontal scan for the nearest water, returns -1 / 0 / +1
 function waterDir(x, y) {
   for (let d = 1; d <= 110; d++) {
@@ -353,98 +385,552 @@ function waterDir(x, y) {
   return 0;
 }
 
+// If heat or acid is close, ordinary people put survival ahead of personality.
+function dangerDir(x, y) {
+  for (let d = 1; d <= 13; d++) {
+    for (let oy = -2; oy <= 2; oy++) {
+      if (dangerousCell(cellAt(x - d, y + oy))) return 1;
+      if (dangerousCell(cellAt(x + d, y + oy))) return -1;
+    }
+  }
+  return 0;
+}
+
 function tryDig(x, y) {
   const c = cellAt(x, y);
-  if (c === E.SAND || c === E.PLANT || c === E.STONE || c === E.GLASS) {
+  if (c === E.SAND || c === E.PLANT || c === E.STONE || c === E.GLASS || c === E.SUPPORT) {
     setCell(idx(x, y), E.EMPTY);
     return true;
   }
   return false;
 }
 
+function diggableCell(c) {
+  return c === E.SAND || c === E.PLANT || c === E.STONE || c === E.GLASS || c === E.SUPPORT;
+}
+
+function placeSupport(x, y) {
+  if (x < 0 || x >= W || y < 0 || y >= H) return false;
+  const c = cellAt(x, y);
+  if (c === E.EMPTY || c === E.SAND || c === E.STONE || c === E.GLASS || c === E.PLANT) {
+    setCell(idx(x, y), E.SUPPORT);
+    return true;
+  }
+  return false;
+}
+
+// A horizontal tunnel gets two continuous wooden platforms: one roof beam and
+// one floor beam. They hold loose material in place but remain burnable.
+function shoreTunnel(x, y) {
+  for (let dx = -1; dx <= 1; dx++) {
+    placeSupport(x + dx, y - 3);
+    placeSupport(x + dx, y + 1);
+  }
+}
+
+// A narrow vertical shaft uses side rails, keeping the opening from widening as
+// sand settles. A small braced chamber is cut when the shaft meets a branch.
+function shoreShaft(x, y) {
+  for (let dy = -2; dy <= 1; dy++) {
+    placeSupport(x - 1, y + dy);
+    placeSupport(x + 1, y + dy);
+  }
+}
+
+function carveJunction(x, y) {
+  for (let dx = -2; dx <= 2; dx++) {
+    for (let dy = -2; dy <= 0; dy++) tryDig(x + dx, y + dy);
+  }
+  shoreTunnel(x, y);
+}
+
+function arcClear(p, vx, vy, ticks) {
+  for (let t = 2; t < ticks - 2; t++) {
+    const x = Math.round(p.x + vx * t);
+    const y = Math.round(p.y + vy * t + GRAV * t * t * 0.5);
+    if (x < 1 || x >= W - 1 || y < 3 || y >= H - 1 || !bodyClear(x, y)) return false;
+  }
+  return true;
+}
+
+// Solve a ballistic arc for an actual destination instead of choosing a jump
+// height. Different ledges therefore naturally get different launch strengths.
+function solveArc(p, tx, ty, options = {}) {
+  const dx = tx - p.x, dy = ty - p.y;
+  const minTicks = options.minTicks || 24;
+  const maxTicks = options.maxTicks || 100;
+  const maxVX = options.maxVX || 1.75;
+  const maxRise = options.maxRise || MAX_RISE;
+  const tickStep = options.tickStep || 4;
+  const feasible = [];
+  for (let ticks = minTicks; ticks <= maxTicks; ticks += tickStep) {
+    const vx = dx / ticks;
+    const vy = (dy - GRAV * ticks * ticks * 0.5) / ticks;
+    if (Math.abs(vx) < (options.minVX || 0) || Math.abs(vx) > maxVX || vy > -0.38 || vy < -maxRise) continue;
+    if (!arcClear(p, vx, vy, ticks)) continue;
+    const cost = Math.abs(vy) + Math.abs(vx) * 0.35 + ticks * 0.002;
+    feasible.push({ vx, vy, ticks, cost });
+  }
+  if (!feasible.length) return null;
+  const styles = [0.08, 0.38, 0.68, 0.22];
+  const style = options.variant === undefined ? p.jumpCount : options.variant;
+  const fraction = styles[(style + (p.seed & 3)) & 3];
+  return feasible[Math.min(feasible.length - 1, Math.floor((feasible.length - 1) * fraction))];
+}
+
+function findLanding(p, options) {
+  const fx = Math.round(p.x), fy = Math.round(p.y);
+  const xmin = Math.max(2, fx - options.rangeX);
+  const xmax = Math.min(W - 3, fx + options.rangeX);
+  const ymin = Math.max(3, fy - options.rangeUp);
+  const ymax = Math.min(H - 2, fy + options.rangeDown);
+  const minDx = options.minDx || 7;
+  const recent = options.avoidRecent ? p.jumpHistory.filter(h => p.t - h.t < 700) : [];
+  let best = null;
+  const candidates = [];
+  for (let x = xmin + ((p.seed + frame) & 1); x <= xmax; x += 2) {
+    const dx = x - fx;
+    if (Math.abs(dx) < minDx) continue;
+    for (let y = ymin; y <= ymax; y++) {
+      if (!safeLanding(x, y)) continue;
+      if (Math.abs(y - fy) < 2 && Math.abs(dx) < 20) continue;
+      if (recent.some(h => Math.hypot(x - h.x, y - h.y) < 12)) continue;
+      if (options.ignore && options.ignore.some(h => Math.hypot(x - h.x, y - h.y) < 14)) continue;
+      const dist = Math.hypot(dx, y - fy);
+      let score = dist * (options.preferFar ? 1 : 0.32) + Math.max(0, fy - y) * 0.75;
+      if (cellAt(x, y + 1) === E.LIFE) score += 14; // living platforms are especially tempting
+      if (p.lastJumpDir && Math.sign(dx) !== p.lastJumpDir) score += 5 + Math.random() * 7;
+      score += Math.sin(x * 0.17 + y * 0.11 + p.seed + p.jumpCount * 1.9) * 7;
+      score += Math.random() * 18;
+      const candidate = { x, y, arc: null, score };
+      if (options.flying) {
+        if (!best || score > best.score) best = candidate;
+      } else candidates.push(candidate);
+    }
+  }
+  if (!options.flying) {
+    candidates.sort((a, b) => b.score - a.score);
+    const tries = Math.min(options.maxTries || 32, candidates.length);
+    for (let n = 0; n < tries; n++) {
+      const candidate = candidates[n];
+      candidate.arc = solveArc(p, candidate.x, candidate.y, options.arc || {});
+      if (candidate.arc) return candidate;
+    }
+  }
+  return best;
+}
+
+function launchTo(p, landing, pauseMin, pauseMax) {
+  p.jumpHistory.unshift({ x: Math.round(p.x), y: Math.round(p.y), t: p.t });
+  if (p.jumpHistory.length > 5) p.jumpHistory.length = 5;
+  p.jumpCount++;
+  p.vx = landing.arc.vx;
+  p.vy = landing.arc.vy;
+  p.dir = p.vx < 0 ? -1 : 1;
+  p.lastJumpDir = p.dir;
+  p.target = { x: landing.x, y: landing.y, pauseMin, pauseMax };
+  p.next = p.t + landing.arc.ticks + 20; // also throttles replanning if an evolving world spoils the arc
+  p.onGround = false;
+  p.airPeak = p.y;
+}
+
+const FLIGHT_GRID = 4;
+const FLIGHT_GW = Math.ceil(W / FLIGHT_GRID);
+const FLIGHT_GH = Math.ceil(H / FLIGHT_GRID);
+const FLIGHT_N = FLIGHT_GW * FLIGHT_GH;
+const flightScore = new Float32Array(FLIGHT_N);
+const flightCame = new Int32Array(FLIGHT_N);
+const flightClosed = new Uint8Array(FLIGHT_N);
+const flightPassable = new Uint8Array(FLIGHT_N);
+
+function flightClearAt(x, y) {
+  x = Math.round(x); y = Math.round(y);
+  if (x < 2 || x >= W - 2 || y < 3 || y >= H - 1) return false;
+  if (!bodyClear(x, y) || !bodyClear(x - 1, y) || !bodyClear(x + 1, y)) return false;
+  for (let oy = -2; oy <= 1; oy++) {
+    for (let ox = -2; ox <= 2; ox++) {
+      if (dangerousCell(cellAt(x + ox, y + oy))) return false;
+    }
+  }
+  return true;
+}
+
+function flightSegmentClear(x0, y0, x1, y1) {
+  const distance = Math.hypot(x1 - x0, y1 - y0);
+  const steps = Math.max(1, Math.ceil(distance / 0.7));
+  for (let n = 1; n <= steps; n++) {
+    const t = n / steps;
+    if (!flightClearAt(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)) return false;
+  }
+  return true;
+}
+
+function flightNodePoint(node) {
+  const gx = node % FLIGHT_GW, gy = (node / FLIGHT_GW) | 0;
+  return {
+    x: Math.min(W - 3, 2 + gx * FLIGHT_GRID),
+    y: Math.min(H - 2, 3 + gy * FLIGHT_GRID),
+  };
+}
+
+function buildFlightPassability() {
+  for (let node = 0; node < FLIGHT_N; node++) {
+    const point = flightNodePoint(node);
+    flightPassable[node] = flightClearAt(point.x, point.y) ? 1 : 0;
+  }
+  return flightPassable;
+}
+
+function nearestFlightNode(x, y, passable) {
+  const cgx = Math.max(0, Math.min(FLIGHT_GW - 1, Math.round((x - 2) / FLIGHT_GRID)));
+  const cgy = Math.max(0, Math.min(FLIGHT_GH - 1, Math.round((y - 3) / FLIGHT_GRID)));
+  for (let radius = 0; radius <= 5; radius++) {
+    let best = -1, bestDist = Infinity;
+    for (let gy = Math.max(0, cgy - radius); gy <= Math.min(FLIGHT_GH - 1, cgy + radius); gy++) {
+      for (let gx = Math.max(0, cgx - radius); gx <= Math.min(FLIGHT_GW - 1, cgx + radius); gx++) {
+        if (Math.max(Math.abs(gx - cgx), Math.abs(gy - cgy)) !== radius) continue;
+        const node = gy * FLIGHT_GW + gx, point = flightNodePoint(node);
+        if (!passable[node]) continue;
+        const dist = Math.hypot(point.x - x, point.y - y);
+        if (dist < bestDist) { best = node; bestDist = dist; }
+      }
+    }
+    if (best >= 0) return best;
+  }
+  return -1;
+}
+
+function heapPush(heap, entry) {
+  let i = heap.length;
+  heap.push(entry);
+  while (i > 0) {
+    const parent = (i - 1) >> 1;
+    if (heap[parent].f <= entry.f) break;
+    heap[i] = heap[parent]; i = parent;
+  }
+  heap[i] = entry;
+}
+
+function heapPop(heap) {
+  const root = heap[0], last = heap.pop();
+  if (heap.length && last) {
+    let i = 0;
+    while (true) {
+      let child = i * 2 + 1;
+      if (child >= heap.length) break;
+      if (child + 1 < heap.length && heap[child + 1].f < heap[child].f) child++;
+      if (heap[child].f >= last.f) break;
+      heap[i] = heap[child]; i = child;
+    }
+    heap[i] = last;
+  }
+  return root;
+}
+
+// Coarse A* gives each flyer a safe corridor. We retain short waypoint spacing
+// so inertial steering and gravity round the route into a curve instead of a line.
+function planFlightPath(p, landing, passable = buildFlightPassability()) {
+  const start = nearestFlightNode(p.x, p.y, passable);
+  const goal = nearestFlightNode(landing.x, landing.y - 6, passable);
+  if (start < 0 || goal < 0) return null;
+
+  flightScore.fill(Infinity);
+  flightCame.fill(-1);
+  flightClosed.fill(0);
+  const heap = [];
+  flightScore[start] = 0;
+  const goalPoint = flightNodePoint(goal);
+  heapPush(heap, { node: start, f: Math.hypot(p.x - goalPoint.x, p.y - goalPoint.y) });
+  const dirs = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, 1.414], [1, -1, 1.414], [-1, 1, 1.414], [-1, -1, 1.414]];
+  let found = false, expanded = 0;
+  while (heap.length && expanded < FLIGHT_N) {
+    const current = heapPop(heap).node;
+    if (flightClosed[current]) continue;
+    flightClosed[current] = 1; expanded++;
+    if (current === goal) { found = true; break; }
+    const gx = current % FLIGHT_GW, gy = (current / FLIGHT_GW) | 0;
+    for (const [dx, dy, cost] of dirs) {
+      const nx = gx + dx, ny = gy + dy;
+      if (nx < 0 || nx >= FLIGHT_GW || ny < 0 || ny >= FLIGHT_GH) continue;
+      const next = ny * FLIGHT_GW + nx;
+      if (flightClosed[next]) continue;
+      if (!passable[next]) continue;
+      // For a diagonal move, both neighboring cardinal cells must be clear so
+      // the coarse route cannot cut through an obstacle corner.
+      if (dx && dy && (!passable[gy * FLIGHT_GW + nx] || !passable[ny * FLIGHT_GW + gx])) continue;
+      const tentative = flightScore[current] + cost;
+      if (tentative >= flightScore[next]) continue;
+      flightScore[next] = tentative;
+      flightCame[next] = current;
+      const h = Math.hypot(nx - (goal % FLIGHT_GW), ny - ((goal / FLIGHT_GW) | 0));
+      heapPush(heap, { node: next, f: tentative + h });
+    }
+  }
+  if (!found) return null;
+
+  const raw = [];
+  for (let node = goal; node >= 0; node = flightCame[node]) {
+    raw.push(flightNodePoint(node));
+    if (node === start) break;
+  }
+  raw.reverse();
+  if (!flightSegmentClear(p.x, p.y, raw[0].x, raw[0].y)) return null;
+  const path = [raw[0]];
+  let i = 0;
+  while (i < raw.length - 1) {
+    let j = Math.min(raw.length - 1, i + 5);
+    while (j > i + 1 && !flightSegmentClear(raw[i].x, raw[i].y, raw[j].x, raw[j].y)) j--;
+    path.push(raw[j]);
+    i = j;
+  }
+  const approach = { x: landing.x, y: Math.max(3, landing.y - 5) };
+  const tail = path.length ? path[path.length - 1] : flightNodePoint(start);
+  if (!flightSegmentClear(tail.x, tail.y, approach.x, approach.y)) return null;
+  if (!flightSegmentClear(approach.x, approach.y, landing.x, landing.y)) return null;
+  if (!path.length || Math.hypot(tail.x - approach.x, tail.y - approach.y) > 2) path.push(approach);
+  path.push({ x: landing.x, y: landing.y });
+  return path;
+}
+
+function startDaredevilFlight(p) {
+  const ignored = [];
+  const passable = buildFlightPassability();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const landing = findLanding(p, {
+      rangeX: W - 6, rangeUp: 135, rangeDown: 110, preferFar: true, flying: true, ignore: ignored,
+    });
+    if (!landing) return false;
+    const path = planFlightPath(p, landing, passable);
+    if (path) {
+      p.flight = {
+        x: landing.x, y: landing.y, path, index: 0,
+        stuck: 0, replans: 0, recoveries: 0, lastX: p.x, lastY: p.y,
+        phase: Math.random() * Math.PI * 2,
+      };
+      p.target = { x: landing.x, y: landing.y, pauseMin: 95, pauseMax: 210 };
+      p.dir = landing.x < p.x ? -1 : 1;
+      p.vx = 0.18 * p.dir;
+      p.vy = -0.28 - Math.random() * 0.22;
+      p.onGround = false;
+      return true;
+    }
+    ignored.push(landing);
+  }
+  return false;
+}
+
+function replanFlight(p) {
+  const f = p.flight;
+  if (!f || f.replans >= 4) return false;
+  const path = planFlightPath(p, { x: f.x, y: f.y });
+  if (!path) return false;
+  f.path = path; f.index = 0; f.stuck = 0; f.replans++;
+  return true;
+}
+
+function recoverFlight(p) {
+  const f = p.flight;
+  if (!f) return false;
+  if (f.recoveries >= 4) {
+    p.flight = null; p.target = null;
+    return startDaredevilFlight(p); // choose a different reachable landing
+  }
+  const toward = f.x < p.x ? -1 : 1;
+  const directions = [[0, -1], [toward, -1], [-toward, -1], [toward, 0], [-toward, 0]];
+  let escape = null;
+  for (let radius = 7; radius <= 22 && !escape; radius += 5) {
+    for (const [dx, dy] of directions) {
+      const x = Math.max(2, Math.min(W - 3, p.x + dx * radius));
+      const y = Math.max(3, Math.min(H - 2, p.y + dy * radius));
+      if (flightClearAt(x, y) && flightSegmentClear(p.x, p.y, x, y)) { escape = { x, y }; break; }
+    }
+  }
+  if (!escape) return false;
+  f.path = [
+    escape,
+    { x: f.x, y: Math.max(3, f.y - 7) },
+    { x: f.x, y: f.y },
+  ];
+  f.index = 0; f.stuck = 0; f.replans = 0; f.recoveries++;
+  p.vx *= 0.25; p.vy = Math.min(p.vy, -0.32);
+  return true;
+}
+
+function followSupport(p) {
+  const s = p.support;
+  if (!s || !p.onGround) return;
+  const exact = cellAt(s.x, s.y);
+  if (s.type === E.LIFE) {
+    if (exact === E.LIFE) return;
+  } else if (exact === s.type && shade[idx(s.x, s.y)] === s.shade) {
+    return;
+  }
+  let best = null;
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -3; dx <= 3; dx++) {
+      const x = s.x + dx, y = s.y + dy;
+      if (x < 1 || x >= W - 1 || y < 1 || y >= H) continue;
+      const c = cellAt(x, y);
+      const match = s.type === E.LIFE
+        ? c === E.LIFE
+        : c === s.type && shade[idx(x, y)] === s.shade;
+      if (!match) continue;
+      const px = Math.round(p.x) + dx, py = Math.round(p.y) + dy;
+      if (!bodyClear(px, py)) continue;
+      const score = Math.abs(dx) + Math.abs(dy) * 1.2;
+      if (!best || score < best.score) best = { x, y, dx, dy, score };
+    }
+  }
+  if (best) {
+    p.x += best.dx; p.y += best.dy;
+    s.x = best.x; s.y = best.y;
+  } else {
+    p.support = null;
+    p.onGround = false;
+  }
+}
+
+function recordSupport(p) {
+  if (!p.onGround) { p.support = null; return; }
+  const x = Math.round(p.x), y = Math.round(p.y) + 1;
+  if (x < 0 || x >= W || y < 0 || y >= H) { p.support = null; return; }
+  const type = cellAt(x, y);
+  if (!SOLID_P[type]) { p.support = null; return; }
+  p.support = { x, y, type, shade: shade[idx(x, y)] };
+}
+
 // per-type intent: sets p.vx and occasionally launches a jump (p.vy)
 function decide(p) {
   const fx = Math.round(p.x), fy = Math.round(p.y);
+  const panic = p.type !== "daredevil" && p.type !== "digger" ? dangerDir(fx, fy) : 0;
+  if (panic) {
+    p.dir = panic;
+    p.desiredVx = 0.56 * panic;
+    if (p.onGround && p.t >= p.next) {
+      p.vy = -0.8 - Math.random() * 0.4;
+      p.next = p.t + 24;
+    }
+    return;
+  }
   switch (p.type) {
 
     case "wanderer": {
       if (p.onGround && p.t >= p.next) {
-        p.next = p.t + 40 + Math.random() * 90;
         const r = Math.random();
-        if (r < 0.5) p.vy = -0.5 - Math.random() * 0.2;        // little hop
-        else if (r < 0.75) p.dir = -p.dir;                      // turn around
-        p.vx = Math.random() < 0.5 ? 0 : 0.12 * p.dir;          // sometimes stroll
+        if (r < 0.28) p.vy = -0.5 - Math.random() * 0.2;
+        if (r < 0.48) p.dir = -p.dir;
+        p.walkUntil = p.t + (r > 0.36 ? 24 + Math.random() * 55 : 0);
+        p.next = p.walkUntil + 45 + Math.random() * 105;
       }
+      if (p.t < p.walkUntil) p.desiredVx = 0.14 * p.dir;
       break;
     }
 
     case "adventurer": {
-      p.vx = 0.42 * p.dir;
       if (p.onGround) {
-        const wall = solidP(fx + p.dir, fy) || solidP(fx + p.dir, fy - 1);
-        const gap = !solidP(fx + p.dir, fy + 1);
-        if (wall || (gap && Math.random() < 0.4)) p.vy = -0.92 - Math.random() * 0.3;
-        if (p.blocked && Math.random() < 0.5) p.dir = -p.dir;
-        if (p.t >= p.next) { p.next = p.t + 130 + Math.random() * 200; if (Math.random() < 0.3) p.dir = -p.dir; }
+        if (p.t >= p.next) {
+          if (Math.random() < 0.35) p.dir = -p.dir;
+          p.walkUntil = p.t + 85 + Math.random() * 135;
+          p.next = p.walkUntil + 35 + Math.random() * 100;
+        }
+        if (p.t < p.walkUntil) {
+          p.desiredVx = 0.42 * p.dir;
+          const wall = solidP(fx + p.dir, fy) || solidP(fx + p.dir, fy - 1);
+          const gap = !solidP(fx + p.dir, fy + 1);
+          if (wall || (gap && Math.random() < 0.4)) p.vy = -0.92 - Math.random() * 0.3;
+          if (p.blocked && Math.random() < 0.5) p.dir = -p.dir;
+        }
       }
       break;
     }
 
     case "platformer": {
-      // set intent only on the ground; keep momentum through the arc so leaps carry
-      if (p.onGround) {
-        p.vx = 0.3 * p.dir;
-        if (p.blocked) {
-          p.vy = -1.2 - Math.random() * 0.3;                    // hop over what blocks us
-          p.vx = 0.5 * p.dir;
-          if (Math.random() < 0.25) p.dir = -p.dir;
-        } else if (p.t >= p.next) {
-          p.next = p.t + 30 + Math.random() * 35;
-          // look for a reachable ledge ahead-and-up (solid with clear air over it)
-          let jump = 0;
-          for (let dy = 2; dy <= 13 && !jump; dy++) {
-            for (let dx = 1; dx <= 11; dx++) {
-              const lx = fx + p.dir * dx, ly = fy - dy;
-              if (solidP(lx, ly) && !solidP(lx, ly - 1) && !solidP(lx, ly - 2)) {
-                jump = Math.min(1.7, 0.6 + dy * 0.11);           // jump just hard enough to clear it
-                break;
-              }
-            }
-          }
-          const gap = !solidP(fx + p.dir, fy + 1);
-          if (jump) { p.vy = -jump; p.vx = 0.55 * p.dir; }      // leap up AND forward onto the ledge
-          else if (gap) { p.vy = -0.9; p.vx = 0.5 * p.dir; }    // clear the gap
-          else if (Math.random() < 0.3) p.vy = -0.6;            // idle bounce
+      if (p.onGround && p.t >= p.next) {
+        const landing = findLanding(p, {
+          rangeX: 62, rangeUp: 38, rangeDown: 42, minDx: 12,
+          preferFar: false, flying: false, avoidRecent: true, maxTries: 26,
+          arc: { minTicks: 24, maxTicks: 84, tickStep: 2, minVX: 0.18, maxVX: 1.0, maxRise: 2.05, variant: p.jumpCount },
+        });
+        if (landing) {
+          launchTo(p, landing, 34 + (p.jumpCount % 3) * 9, 86 + (p.jumpCount % 2) * 24);
+        } else {
+          if (p.blocked || Math.random() < 0.45) p.dir = -p.dir;
+          p.walkUntil = p.t + 24 + Math.random() * 42;
+          p.next = p.walkUntil + 35 + Math.random() * 60;
         }
       }
+      if (p.onGround && p.t < p.walkUntil) p.desiredVx = 0.22 * p.dir;
       break;
     }
 
     case "daredevil": {
-      if (p.onGround) {
-        if (p.blocked) p.dir = -p.dir;
-        if (p.t >= p.next) {
-          p.next = p.t + 28 + Math.random() * 40;
-          if (Math.random() < 0.15) p.dir = -p.dir;
-          p.vy = -1.25 - Math.random() * 0.4;                   // big launch
-          p.vx = (0.6 + Math.random() * 0.35) * p.dir;          // and fling forward
-        }
+      if (p.onGround && p.t >= p.next) {
+        if (!startDaredevilFlight(p)) p.next = p.t + 55 + Math.random() * 85;
       }
       break;
     }
 
     case "digger": {
-      p.vx = 0.22 * p.dir;
-      if (p.onGround) {
-        // carve a person-height tunnel ahead, faster than the sand caves back in
-        const ax = fx + p.dir;
-        tryDig(ax, fy); tryDig(ax, fy - 1); tryDig(ax, fy - 2);
-        if (p.blocked) {                                        // wall we can't eat (stone shelf edge, etc.)
-          tryDig(fx + p.dir * 2, fy); tryDig(fx + p.dir * 2, fy - 1);
-          if (Math.random() < 0.06) p.dir = -p.dir;
+      if (p.digMode === "shaft") {
+        if (!p.digStarted) {
+          if (!p.onGround) break;
+          p.digStarted = true;
+          p.digStartY = fy;
+          if (!p.digDepth) p.digDepth = 10 + Math.random() * 20;
         }
-        if (Math.random() < 0.03) tryDig(fx, fy + 1);           // occasionally burrow down
-        if (p.t >= p.next) { p.next = p.t + 120 + Math.random() * 140; if (Math.random() < 0.25) p.dir = -p.dir; }
+        p.vx = 0;
+        tryDig(fx, fy + 1);
+        tryDig(fx, fy + 2);
+        shoreShaft(fx, fy);
+        if (fy - p.digStartY >= p.digDepth || fy >= H - 8) {
+          carveJunction(fx, fy);
+          p.digMode = "level";
+          p.digStarted = false;
+          p.dir = Math.random() < 0.5 ? -1 : 1;
+          p.next = p.t + 75 + Math.random() * 115;
+        }
+      } else {
+        const ax = fx + p.dir;
+        let earthAhead = false;
+        for (let look = 1; look <= 2 && !earthAhead; look++) {
+          for (let dy = -3; dy <= 1; dy++) {
+            const c = cellAt(fx + p.dir * look, fy + dy);
+            if (c === E.SAND || c === E.PLANT || c === E.STONE || c === E.GLASS) { earthAhead = true; break; }
+          }
+        }
+        const existingTunnelAhead = cellAt(ax, fy - 3) === E.SUPPORT && cellAt(ax, fy + 1) === E.SUPPORT;
+        const tunnelContinues = cellAt(ax + p.dir, fy - 3) === E.SUPPORT && cellAt(ax + p.dir, fy + 1) === E.SUPPORT;
+        if (!earthAhead) {
+          if (existingTunnelAhead && tunnelContinues) p.desiredVx = 0.17 * p.dir;
+          else {
+            p.vx *= 0.45;
+            if (p.onGround && p.t >= p.next) {
+              p.dir = -p.dir;
+              p.next = p.t + 45 + Math.random() * 70;
+            }
+          }
+          break;
+        }
+
+        p.desiredVx = 0.19 * p.dir;
+        tryDig(ax, fy); tryDig(ax, fy - 1); tryDig(ax, fy - 2);
+        shoreTunnel(ax, fy);
+        if (p.blocked) {
+          if (Math.random() < 0.12) p.dir = -p.dir;
+        }
+        if (p.onGround && p.t >= p.next) {
+          if (Math.random() < 0.64 && fy < H - 15) {
+            carveJunction(fx, fy);
+            p.digMode = "shaft";
+            p.digStarted = true;
+            p.digStartY = fy;
+            p.digDepth = 9 + Math.random() * 20;
+            tryDig(fx, fy + 1);
+          } else {
+            p.dir = -p.dir;
+            p.next = p.t + 70 + Math.random() * 125;
+          }
+        }
       }
       break;
     }
@@ -453,17 +939,17 @@ function decide(p) {
       const wet = cellAt(fx, fy) === E.WATER || cellAt(fx, fy - 1) === E.WATER;
       if (wet) {
         if (p.t >= p.next) { p.next = p.t + 26 + Math.random() * 40; p.dir = Math.random() < 0.5 ? -1 : 1; }
-        p.vx = 0.18 * p.dir;                                    // paddle; buoyancy in physics
+        p.desiredVx = 0.18 * p.dir;
         // if about to leave the pool, turn back in so swimmers actually swim
         const ahead = cellAt(fx + p.dir, fy) === E.WATER || cellAt(fx + p.dir, fy + 1) === E.WATER;
         if (!ahead && Math.random() < 0.6) p.dir = -p.dir;
       } else {
         const wd = waterDir(fx, fy);
         if (wd !== 0) {
-          p.dir = wd; p.vx = 0.28 * p.dir;
-          if (p.onGround && p.blocked) p.vy = -0.9;             // hop toward water
-        } else {                                               // no water in sight: mill about
-          p.vx = 0.14 * p.dir;
+          p.dir = wd; p.desiredVx = 0.28 * p.dir;
+          if (p.onGround && p.blocked) p.vy = -0.9;
+        } else {
+          if (p.t < p.walkUntil) p.desiredVx = 0.14 * p.dir;
           if (p.onGround && p.t >= p.next) { p.next = p.t + 60 + Math.random() * 90; if (Math.random() < 0.4) p.dir = -p.dir; }
         }
       }
@@ -472,37 +958,154 @@ function decide(p) {
   }
 }
 
+function physicsFlying(p) {
+  const f = p.flight;
+  let waypoint = f.path[Math.min(f.index, f.path.length - 1)];
+  let dx = waypoint.x - p.x, dy = waypoint.y - p.y;
+  let dist = Math.hypot(dx, dy);
+  while (dist < 3.2 && f.index < f.path.length - 1) {
+    f.index++;
+    waypoint = f.path[f.index];
+    dx = waypoint.x - p.x; dy = waypoint.y - p.y; dist = Math.hypot(dx, dy);
+  }
+
+  const finalApproach = f.index === f.path.length - 1;
+  if (finalApproach && dist < 1.6) {
+    if (safeLanding(Math.round(f.x), Math.round(f.y))) {
+      p.x = f.x; p.y = f.y; p.vx = p.vy = 0;
+      p.flight = null; p.onGround = true;
+      return { landed: true, drop: 0 };
+    }
+    // A moving Life destination can disappear. Drop out of powered flight
+    // instead of hovering forever around a landing that no longer exists.
+    p.flight = null; p.target = null; p.next = p.t + 55;
+    p.onGround = false;
+    return { landed: false, drop: 0 };
+  }
+
+  if (((p.t + p.seed) & 15) === 0 && !flightSegmentClear(p.x, p.y, waypoint.x, waypoint.y)) {
+    if (!replanFlight(p) && !recoverFlight(p)) {
+      p.flight = null; p.target = null; p.onGround = false;
+      return { landed: false, drop: 0 };
+    }
+    waypoint = p.flight.path[0];
+    dx = waypoint.x - p.x; dy = waypoint.y - p.y; dist = Math.hypot(dx, dy);
+  }
+
+  const ux = dist > 0.01 ? dx / dist : 0;
+  const uy = dist > 0.01 ? dy / dist : 0;
+  const phase = p.t * 0.061 + f.phase;
+  const targetDistance = Math.hypot(f.x - p.x, f.y - p.y);
+  const landingZone = targetDistance < 28 || f.index >= f.path.length - 2;
+  let targetSpeed = 0.58 + (Math.sin(phase * 0.73) * 0.5 + 0.5) * 0.48;
+  if (uy > 0.25) targetSpeed += uy * 0.32; // gain speed in the dive, then pull out
+  if (landingZone) targetSpeed = Math.min(targetSpeed, 0.72);
+
+  // Powered lift steers toward the A* corridor, while partial gravity and a
+  // gentle perpendicular weave create curved climbs, banks, and swoops.
+  p.vy += GRAV * 0.72;
+  p.vx += (ux * targetSpeed - p.vx) * (landingZone ? 0.16 : 0.105);
+  p.vy += (uy * targetSpeed - p.vy) * (landingZone ? 0.17 : 0.088);
+  const weave = landingZone ? 0 : Math.sin(phase) * 0.027;
+  p.vx += -uy * weave;
+  p.vy += ux * weave;
+  const speed = Math.hypot(p.vx, p.vy);
+  const maxSpeed = 1.58;
+  if (speed > maxSpeed) { p.vx *= maxSpeed / speed; p.vy *= maxSpeed / speed; }
+
+  const nx = p.x + p.vx, ny = p.y + p.vy;
+  if (!flightSegmentClear(p.x, p.y, nx, ny)) {
+    const impact = Math.hypot(p.vx, p.vy);
+    if (impact >= 0.92) return { landed: false, drop: 0, crashed: true };
+    if (targetDistance < 30 && safeLanding(Math.round(f.x), Math.round(f.y))) {
+      // If a bank cut the corner of the landing platform, pull straight up,
+      // align over its center, and make another slow descent.
+      p.y = Math.max(3, p.y - 1.2);
+      p.vx *= 0.2; p.vy = -0.38;
+      f.path = [
+        { x: p.x, y: Math.max(3, p.y - 6) },
+        { x: f.x, y: Math.max(3, f.y - 5) },
+        { x: f.x, y: f.y },
+      ];
+      f.index = 0; f.stuck = 0;
+      return { landed: false, drop: 0 };
+    }
+    p.vx *= -0.28; p.vy = Math.min(p.vy * -0.25, -0.18);
+    if (!replanFlight(p) && !recoverFlight(p)) {
+      p.flight = null; p.target = null; p.onGround = false;
+    }
+    return { landed: false, drop: 0 };
+  }
+
+  p.x = nx; p.y = ny;
+  const moved = Math.hypot(p.x - f.lastX, p.y - f.lastY);
+  f.stuck = moved < 0.025 ? f.stuck + 1 : 0;
+  f.lastX = p.x; f.lastY = p.y;
+  if (f.stuck > 24) {
+    if (!replanFlight(p) && !recoverFlight(p)) { p.flight = null; p.target = null; }
+    else { p.vy -= 0.28; p.vx += 0.16 * p.dir; }
+  }
+  p.onGround = false; p.blocked = false;
+  return { landed: false, drop: 0 };
+}
+
 function physics(p) {
+  if (p.flight) return physicsFlying(p);
+  const wasGround = p.onGround;
   const fxNow = Math.round(p.x), fyNow = Math.round(p.y);
   const buoyant = p.type === "swimmer" &&
     (cellAt(fxNow, fyNow) === E.WATER || cellAt(fxNow, fyNow - 1) === E.WATER);
 
+  const onIce = p.onGround && cellAt(fxNow, fyNow + 1) === E.ICE;
+  if (p.desiredVx !== null && p.vy > -0.1) {
+    const accel = onIce ? 0.026 : 0.11;
+    const delta = Math.max(-accel, Math.min(accel, p.desiredVx - p.vx));
+    p.vx += delta;
+  } else if (p.onGround && p.vy > -0.1) {
+    p.vx *= onIce ? 0.995 : 0.68;
+    if (!onIce && Math.abs(p.vx) < 0.015) p.vx = 0;
+  }
+
   // vertical
   if (buoyant) { p.vy -= 0.05; p.vy *= 0.86; }
   else p.vy += GRAV;
-  if (p.vy > MAXV) p.vy = MAXV;
-  if (p.vy < -MAXV) p.vy = -MAXV;
-  p.y += p.vy;
-
+  if (p.vy > MAX_FALL) p.vy = MAX_FALL;
+  if (p.vy < -MAX_RISE) p.vy = -MAX_RISE;
+  const verticalSpeed = p.vy;
+  const verticalSteps = Math.max(1, Math.ceil(Math.abs(verticalSpeed) / 0.45));
+  const verticalStep = verticalSpeed / verticalSteps;
   let fx = Math.round(p.x), fy = Math.round(p.y);
-  if (p.vy >= 0) {
-    if (solidP(fx, fy + 1)) { p.y = fy; p.vy = 0; }       // rest on top of ground
-    else if (solidP(fx, fy)) { p.y = fy - 1; p.vy = 0; }  // dropped into ground, back out
-  } else if (solidP(fx, fy - 3)) {
-    p.vy = 0;                                             // head bonk (figure is 3 tall)
+  let landed = false;
+  for (let s = 0; s < verticalSteps; s++) {
+    p.y += verticalStep;
+    fx = Math.round(p.x); fy = Math.round(p.y);
+    if (verticalSpeed >= 0) {
+      if (solidP(fx, fy + 1)) { p.y = fy; landed = !wasGround; p.vy = 0; break; }
+      if (solidP(fx, fy)) { p.y = fy - 1; landed = !wasGround; p.vy = 0; break; }
+    } else if (solidP(fx, fy - 3)) {
+      p.vy = 0; break;
+    }
   }
+  fx = Math.round(p.x);
   fy = Math.round(p.y);
   p.onGround = solidP(fx, fy + 1) === 1;
 
   // horizontal
   if (p.vx !== 0) {
-    const nx = p.x + p.vx, nix = Math.round(nx);
-    if (solidP(nix, fy) || solidP(nix, fy - 1)) {
-      // step up a single-cell ledge if the space above it is clear
-      if (p.onGround && solidP(nix, fy) && !solidP(nix, fy - 1) && !solidP(nix, fy - 2)) {
-        p.y -= 1; p.x = nx; p.blocked = false;
-      } else { p.vx = 0; p.blocked = true; }
-    } else { p.x = nx; p.blocked = false; }
+    const horizontalSpeed = p.vx;
+    const horizontalSteps = Math.max(1, Math.ceil(Math.abs(horizontalSpeed) / 0.45));
+    const horizontalStep = horizontalSpeed / horizontalSteps;
+    p.blocked = false;
+    for (let s = 0; s < horizontalSteps; s++) {
+      const nx = p.x + horizontalStep, nix = Math.round(nx);
+      fy = Math.round(p.y);
+      if (solidP(nix, fy) || solidP(nix, fy - 1)) {
+        // step up a single-cell ledge if the space above it is clear
+        if (p.onGround && solidP(nix, fy) && !solidP(nix, fy - 1) && !solidP(nix, fy - 2)) {
+          p.y -= 1; p.x = nx;
+        } else { p.vx = 0; p.blocked = true; break; }
+      } else p.x = nx;
+    }
   }
 
   // bounds
@@ -510,24 +1113,131 @@ function physics(p) {
   if (p.x > W - 2) { p.x = W - 2; p.dir = -1; }
   if (p.y < 3) { p.y = 3; if (p.vy < 0) p.vy = 0; }
   if (p.y > H - 1) { p.y = H - 1; p.vy = 0; p.onGround = true; }
+  p.onGround = solidP(Math.round(p.x), Math.round(p.y) + 1) === 1;
+
+  if (!p.onGround) {
+    if (wasGround) p.airPeak = p.y;
+    else p.airPeak = Math.min(p.airPeak, p.y);
+  }
+  const drop = landed ? Math.max(0, p.y - p.airPeak) : 0;
+  if (landed) p.airPeak = p.y;
+  return { landed, drop };
+}
+
+function airNearby(x, y) {
+  for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      const c = cellAt(x + dx, y + dy);
+      if (c === E.EMPTY || c === E.PLANT) return true; // plants make sealed gardens breathable
+    }
+  }
+  return false;
+}
+
+function kickSand(p, drop) {
+  if (drop < 15) return;
+  const x = Math.round(p.x), y = Math.round(p.y) + 1;
+  if (cellAt(x, y) !== E.SAND || Math.random() > 0.45) return;
+  const d = Math.random() < 0.5 ? -1 : 1;
+  const tx = x + d, ty = y - 1;
+  if (cellAt(tx, ty) === E.EMPTY) swapCells(idx(x, y), idx(tx, ty));
+}
+
+function littleWorldInteractions(p, landing) {
+  const x = Math.round(p.x), y = Math.round(p.y) + 1;
+  if (landing.landed) kickSand(p, landing.drop);
+  // A moving rider occasionally leaves a newborn Life cell beside a living
+  // platform, making tiny footprints that can alter the next generation.
+  if (p.onGround && cellAt(x, y) === E.LIFE && Math.abs(p.vx) > 0.08 && Math.random() < 0.003) {
+    const d = Math.random() < 0.5 ? -1 : 1;
+    const jx = x + d;
+    if (cellAt(jx, y) === E.EMPTY) setCell(idx(jx, y), E.LIFE, 0);
+  }
+}
+
+function killPerson(k, p, cause) {
+  const duration = cause === "burn" ? 48 : cause === "drown" ? 78 : cause === "fall" ? 105 : cause === "impact" ? 72 : 68;
+  deaths.push({
+    x: p.x, y: p.y, cause, age: 0, duration,
+    color: PTYPES[p.type].color, dir: p.dir, seed: p.seed, vx: p.vx, vy: p.vy,
+  });
+  if (deaths.length > 220) deaths.shift();
+  if (cause === "burn") {
+    const x = Math.round(p.x), y = Math.max(0, Math.round(p.y) - 1);
+    if (cellAt(x, y) === E.EMPTY) setCell(idx(x, y), E.SMOKE, 20 + Math.random() * 25);
+  }
+  people.splice(k, 1);
+}
+
+function applyFallDamage(k, p, landing) {
+  if (!landing.landed || landing.drop <= 0) return false;
+  const support = cellAt(Math.round(p.x), Math.round(p.y) + 1);
+  let threshold = 33, scale = 2.05;
+  if (p.type === "platformer" || p.type === "daredevil") { threshold = 48; scale = 0.72; }
+  else if (p.type === "adventurer") { threshold = 39; scale = 1.35; }
+  if (landing.controlled) { threshold += 18; scale *= 0.28; }
+  if (support === E.LIFE) { threshold += 24; scale *= 0.25; } // living platforms cushion a landing
+  const damage = Math.max(0, landing.drop - threshold) * scale;
+  if (damage <= 0) return false;
+  p.hp -= damage; p.hurt = 28;
+  if (p.hp <= 0) { killPerson(k, p, "fall"); return true; }
+  return false;
+}
+
+function updateBreathingAndHazards(k, p) {
+  const x = Math.round(p.x), y = Math.round(p.y);
+  const body = [cellAt(x, y), cellAt(x, y - 1), cellAt(x, y - 2)];
+  if (body.includes(E.FIRE) || body.includes(E.LAVA)) {
+    killPerson(k, p, "burn"); return true;
+  }
+  if (body.includes(E.ACID) && Math.random() < 0.25) {
+    killPerson(k, p, "acid"); return true;
+  }
+  const submerged = cellAt(x, y - 2) === E.WATER;
+  const breathable = airNearby(x, y - 2);
+  if (submerged) p.oxygen -= p.type === "swimmer" ? 0.62 : 1;
+  else if (!breathable) p.oxygen -= 1.25;
+  else p.oxygen = Math.min(p.oxygenMax, p.oxygen + 4);
+  if (p.oxygen <= 0) {
+    killPerson(k, p, submerged ? "drown" : "suffocate");
+    return true;
+  }
+  return false;
+}
+
+function updateDeaths() {
+  for (let k = deaths.length - 1; k >= 0; k--) {
+    deaths[k].age++;
+    if (deaths[k].age >= deaths[k].duration) deaths.splice(k, 1);
+  }
 }
 
 function updatePeople() {
   for (let k = people.length - 1; k >= 0; k--) {
     const p = people[k];
     p.t++;
+    if (p.hurt > 0) p.hurt--;
+    p.desiredVx = null;
+    followSupport(p);
     decide(p);
-    physics(p);
-    // hazards: the world can be unkind
-    const c = cellAt(Math.round(p.x), Math.round(p.y));
-    if (c === E.FIRE || c === E.LAVA) {
-      const i = idx(Math.round(p.x), Math.max(0, Math.round(p.y) - 1));
-      if (cells[i] === E.EMPTY) setCell(i, E.SMOKE, 20 + Math.random() * 20);
-      people.splice(k, 1);
-    } else if (c === E.ACID && Math.random() < 0.25) {
-      people.splice(k, 1);
+    const landing = physics(p);
+    if (landing.crashed) { killPerson(k, p, "impact"); continue; }
+    if (landing.landed && p.target) {
+      if (Math.abs(p.x - p.target.x) < 5) {
+        p.vx = 0;
+        landing.controlled = true;
+        p.next = p.t + p.target.pauseMin + Math.random() * (p.target.pauseMax - p.target.pauseMin);
+      } else {
+        p.next = Math.max(p.next, p.t + 24 + Math.random() * 36);
+      }
+      p.target = null;
     }
+    if (applyFallDamage(k, p, landing)) continue;
+    littleWorldInteractions(p, landing);
+    if (updateBreathingAndHazards(k, p)) continue;
+    recordSupport(p);
   }
+  updateDeaths();
 }
 
 // ---------- rendering ----------
@@ -551,6 +1261,7 @@ COLORS[E.STONE] = [138, 141, 148, 16];
 COLORS[E.ACID] = [128, 222, 42, 24];
 COLORS[E.ICE] = [168, 216, 240, 14];
 COLORS[E.GLASS] = [172, 202, 208, 8];
+COLORS[E.SUPPORT] = [154, 104, 52, 22];
 
 function putPx(x, y, r, g, b) {
   if (x < 0 || x >= W || y < 0 || y >= H) return;
@@ -561,25 +1272,90 @@ function putPx(x, y, r, g, b) {
   px[p + 3] = 255;
 }
 
+function blendPx(x, y, r, g, b, alpha) {
+  if (x < 0 || x >= W || y < 0 || y >= H || alpha <= 0) return;
+  const p = (y * W + x) * 4;
+  const a = Math.min(1, alpha);
+  px[p] = px[p] * (1 - a) + r * a;
+  px[p + 1] = px[p + 1] * (1 - a) + g * a;
+  px[p + 2] = px[p + 2] * (1 - a) + b * a;
+}
+
 function drawPeople() {
   for (const p of people) {
     const fx = Math.round(p.x), fy = Math.round(p.y);
     const c = PTYPES[p.type].color;
     const j = (p.seed & 7) - 3;                    // tiny per-person tint jitter
-    const r = c[0] + j, g = c[1] + j, b = c[2] + j;
+    const flash = p.hurt > 0 && ((p.hurt >> 2) & 1) ? 75 : 0;
+    const r = Math.min(255, c[0] + j + flash), g = Math.min(255, c[1] + j + flash), b = Math.min(255, c[2] + j + flash);
     const walking = p.onGround && Math.abs(p.vx) > 0.04;
     const airborne = !p.onGround;
+    const flying = !!p.flight;
 
-    putPx(fx, fy - 2, 240, 202, 164);              // head (warm skin)
+    const breathTint = p.oxygen < p.oxygenMax * 0.22 ? 55 : 0;
+    putPx(fx, fy - 2, 240 - breathTint, 202 - breathTint * 0.3, 164 + breathTint);
     putPx(fx, fy - 1, r, g, b);                    // torso
     putPx(fx, fy, r * 0.55, g * 0.55, b * 0.55);   // legs (darker)
 
-    if (airborne) {                                // arms up mid-jump
+    if (flying) {                                  // arms spread like tiny wings
+      putPx(fx - 2, fy - 1, r * 0.7, g * 0.7, b * 0.7);
+      putPx(fx - 1, fy - 1, r * 0.85, g * 0.85, b * 0.85);
+      putPx(fx + 1, fy - 1, r * 0.85, g * 0.85, b * 0.85);
+      putPx(fx + 2, fy - 1, r * 0.7, g * 0.7, b * 0.7);
+    } else if (airborne) {                         // arms up mid-jump
       putPx(fx - 1, fy - 1, r * 0.8, g * 0.8, b * 0.8);
       putPx(fx + 1, fy - 1, r * 0.8, g * 0.8, b * 0.8);
     } else if (walking) {                          // one leg forward, animated
       const step = ((frame >> 2) & 1) ? p.dir : -p.dir;
       putPx(fx + step, fy, r * 0.55, g * 0.55, b * 0.55);
+    }
+  }
+}
+
+function drawDeaths() {
+  for (const d of deaths) {
+    const x = Math.round(d.x), baseY = Math.round(d.y);
+    const t = d.age / d.duration;
+    const c = d.color;
+    if (d.cause === "impact") {
+      const fade = 1 - t;
+      const spread = Math.min(4, d.age * 0.09);
+      const sx = Math.sign(d.vx || d.dir), sy = Math.sign(d.vy || 0);
+      blendPx(x + Math.round(sx * spread), baseY - 2 + Math.round(sy * spread), 235, 184, 150, fade);
+      blendPx(x - Math.round(sx * spread * 0.6), baseY - 1, c[0], c[1], c[2], fade * 0.9);
+      blendPx(x + Math.round(sx * spread * 0.35), baseY + Math.round(sy * spread * 0.5), 245, 232, 205, fade * 0.75);
+      blendPx(x - Math.round(sx * spread), baseY - Math.round(sy * spread), c[0] * 0.5, c[1] * 0.5, c[2] * 0.5, fade * 0.7);
+    } else if (d.cause === "fall") {
+      const slump = Math.min(1, d.age / 18);
+      const fade = d.age < d.duration - 28 ? 1 : (d.duration - d.age) / 28;
+      const headX = x + Math.round(d.dir * 2 * slump);
+      const headY = baseY - 2 + Math.round(2 * slump);
+      blendPx(headX, headY, 230, 184, 150, fade);
+      blendPx(x + Math.round(d.dir * slump), baseY, c[0], c[1], c[2], fade);
+      blendPx(x - d.dir, baseY, c[0] * 0.55, c[1] * 0.55, c[2] * 0.55, fade);
+      blendPx(x + d.dir * 2, baseY, c[0] * 0.45, c[1] * 0.45, c[2] * 0.45, fade);
+    } else if (d.cause === "burn") {
+      const fade = 1 - t;
+      const rise = Math.floor(d.age * 0.08);
+      blendPx(x, baseY - 1 - rise, 255, 120 + ((d.age + d.seed) & 63), 24, fade);
+      blendPx(x - 1, baseY - ((d.age + d.seed) & 3), 255, 72, 12, fade * 0.85);
+      blendPx(x + 1, baseY - 2 - ((d.age + d.seed * 3) & 5), 255, 190, 45, fade * 0.8);
+      if (d.age < 22) blendPx(x, baseY, c[0], c[1] * 0.45, c[2] * 0.2, 1 - d.age / 22);
+    } else if (d.cause === "drown") {
+      const fade = 1 - t;
+      const rise = Math.floor(d.age / 26);
+      blendPx(x, baseY - 2 - rise, 116, 188, 235, fade * 0.7);
+      blendPx(x, baseY - 1 - rise, c[0], c[1], Math.min(255, c[2] + 65), fade * 0.65);
+      blendPx(x, baseY - rise, c[0] * 0.5, c[1] * 0.65, 210, fade * 0.55);
+      const bx = x + (((d.age + d.seed) >> 3) & 1 ? 2 : -2);
+      blendPx(bx, baseY - 3 - Math.floor(d.age / 8), 175, 225, 255, fade * 0.8);
+    } else {
+      const fade = 1 - t;
+      const jitter = ((d.age + d.seed) & 3) - 1;
+      const tint = d.cause === "acid" ? [128, 238, 48] : [150, 156, 174];
+      blendPx(x + jitter, baseY - 2, tint[0], tint[1], tint[2], fade);
+      blendPx(x, baseY - 1, c[0], c[1], c[2], fade * 0.7);
+      blendPx(x - jitter, baseY, tint[0], tint[1], tint[2], fade * 0.5);
     }
   }
 }
@@ -615,6 +1391,7 @@ function render() {
     px[p] = r; px[p + 1] = g; px[p + 2] = b; px[p + 3] = 255;
   }
   drawPeople();
+  drawDeaths();
   ctx.putImageData(img, 0, 0);
 }
 
@@ -846,6 +1623,7 @@ function clearWorld() {
   life.fill(0);
   stamp.fill(0);
   people.length = 0;
+  deaths.length = 0;
 }
 
 document.addEventListener("keydown", (ev) => {
@@ -986,6 +1764,8 @@ function seedWorld() {
   spawnPerson(60, 150, "adventurer");
   spawnPerson(30, 150, "platformer");
   spawnPerson(90, 150, "daredevil");
+  spawnPerson(122, 150, "digger");
+  spawnPerson(198, 158, "swimmer");
 }
 
 seedWorld();
