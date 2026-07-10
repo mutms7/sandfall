@@ -4,28 +4,28 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sandfall — a tiny alchemy sandbox</title>
+  <meta name="description" content="A tiny falling-sand alchemy sandbox in a single canvas. Paint elements, spawn little people, watch it all interact." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='2' y='10' width='12' height='4' fill='%23e0b060'/><rect x='7' y='3' width='2' height='2' fill='%23e0b060'/><rect x='6' y='6' width='4' height='3' fill='%23e0b060'/></svg>" />
 </head>
 <body>
   <header>
-    <h1>SANDFALL</h1>
-    <p class="tagline">a tiny alchemy sandbox &mdash; paint elements, watch them fight</p>
+    <h1 class="sr-only">SANDFALL</h1>
+    <canvas id="logo" role="img" aria-label="SANDFALL"></canvas>
+    <p class="tagline">a tiny alchemy sandbox &mdash; paint the elements, spawn a few people, then let it all fight</p>
   </header>
 
   <main>
     <div id="toolbar">
       <div id="palette"></div>
       <div id="controls">
-        <label class="preset-label">
-          <span>life</span>
-          <select id="life-preset" title="Load a Game of Life pattern, then click the canvas to stamp it">
-            <option value="">paste pattern&hellip;</option>
-          </select>
-        </label>
         <label class="brush-label">
-          brush <span id="brush-size-value">4</span>
+          <span>brush</span>
           <input type="range" id="brush-size" min="1" max="16" value="4" />
+          <span id="brush-size-value">4</span>
         </label>
         <button id="btn-pause" title="Pause / resume (Space)">&#10074;&#10074; pause</button>
         <button id="btn-step" title="Advance one frame (.)">step</button>
@@ -37,7 +37,8 @@
       <canvas id="world"></canvas>
       <div id="hud">
         <span id="fps"></span>
-        <span id="hint">left-drag: paint &middot; right-drag: erase &middot; 1&ndash;0: elements &middot; g: life &middot; life preset &rarr; click to stamp &middot; [ ]: brush &middot; space: pause</span>
+        <span id="hint">left-drag paint &middot; right-drag erase &middot; click <b>life</b> / <b>people</b> for a menu &middot; [ ] brush &middot; space pause</span>
+        <span id="pop-count"></span>
       </div>
     </div>
   </main>
@@ -46,7 +47,7 @@
     <p>
       water quenches fire &middot; oil floats and burns &middot; lava turns sand to glass and cools to stone &middot;
       plants drink water and grow &middot; acid eats almost everything &middot; ice creeps across water &middot;
-      life floats and obeys Conway's rules
+      life obeys Conway&rsquo;s rules &middot; and the little people just try to live in it
     </p>
   </footer>
 
