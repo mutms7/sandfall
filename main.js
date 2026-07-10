@@ -7,7 +7,10 @@
 // ============================================================
 
 // ---------- world ----------
-const W = 300, H = 200;
+// The simulation is deliberately much larger than the visible camera. A 3:2
+// viewport keeps the old canvas feel while letting the world stretch beyond it.
+const W = 480, H = 320;
+const VIEW_W = 300, VIEW_H = 200;
 const N = W * H;
 
 const E = {
@@ -308,8 +311,8 @@ const PTYPES = {
     desc: "pathfinds through curved, gravity-driven flights",
   },
   digger: {
-    label: "digger", color: [216, 178, 74],
-    desc: "builds narrow ant shafts with braced branch platforms",
+    label: "builder", color: [216, 178, 74],
+    desc: "carves broad angled tunnels and sometimes raises towers",
   },
   swimmer: {
     label: "swimmer", color: [70, 202, 226],
@@ -339,6 +342,10 @@ function spawnPerson(x, y, type) {
     jumpHistory: [], jumpCount: 0, lastJumpDir: 0,
     digMode: shaftFirst ? "shaft" : "level", digStartY: y,
     digDepth: shaftFirst ? 12 + Math.random() * 18 : 0, digStarted: false,
+    tunnelHalf: Math.random() < 0.68 ? 1 : 2,
+    tunnelHeight: Math.random() < 0.72 ? 4 : 5,
+    slopeDir: 1, slopeSteps: 0, slopeTick: 0, slopeX: x, slopeY: y,
+    pillarX: x, pillarY: y, pillarTop: y, pillarWidth: 1,
   });
 }
 
@@ -409,6 +416,10 @@ function diggableCell(c) {
   return c === E.SAND || c === E.PLANT || c === E.STONE || c === E.GLASS || c === E.SUPPORT;
 }
 
+function burrowMaterial(c) {
+  return c === E.SAND || c === E.PLANT || c === E.STONE || c === E.GLASS;
+}
+
 function placeSupport(x, y) {
   if (x < 0 || x >= W || y < 0 || y >= H) return false;
   const c = cellAt(x, y);
@@ -419,29 +430,69 @@ function placeSupport(x, y) {
   return false;
 }
 
-// A horizontal tunnel gets two continuous wooden platforms: one roof beam and
-// one floor beam. They hold loose material in place but remain burnable.
-function shoreTunnel(x, y) {
-  for (let dx = -1; dx <= 1; dx++) {
-    placeSupport(x + dx, y - 3);
+function carveTunnelSlice(x, y, halfWidth, height) {
+  for (let dx = -halfWidth; dx <= halfWidth; dx++) {
+    for (let dy = -height + 1; dy <= 0; dy++) tryDig(x + dx, y + dy);
+  }
+}
+
+// Every branch gets a real upper and lower platform, wider than the open
+// passage. This is the normal tunnel framing, not the occasional tall tower.
+function shoreTunnel(x, y, halfWidth = 1, height = 4) {
+  for (let dx = -halfWidth - 1; dx <= halfWidth + 1; dx++) {
+    placeSupport(x + dx, y - height);
     placeSupport(x + dx, y + 1);
   }
 }
 
-// A narrow vertical shaft uses side rails, keeping the opening from widening as
-// sand settles. A small braced chamber is cut when the shaft meets a branch.
-function shoreShaft(x, y) {
-  for (let dy = -2; dy <= 1; dy++) {
-    placeSupport(x - 1, y + dy);
-    placeSupport(x + 1, y + dy);
+function carveShaftSlice(x, y, halfWidth, height) {
+  for (let dx = -halfWidth; dx <= halfWidth; dx++) {
+    for (let dy = -height + 1; dy <= 2; dy++) tryDig(x + dx, y + dy);
   }
 }
 
-function carveJunction(x, y) {
-  for (let dx = -2; dx <= 2; dx++) {
-    for (let dy = -2; dy <= 0; dy++) tryDig(x + dx, y + dy);
+// Vertical shafts are the same generous width, with rails on both sides.
+function shoreShaft(x, y, halfWidth = 1, height = 4) {
+  for (let dy = -height + 1; dy <= 1; dy++) {
+    placeSupport(x - halfWidth - 1, y + dy);
+    placeSupport(x + halfWidth + 1, y + dy);
   }
-  shoreTunnel(x, y);
+}
+
+function carveJunction(x, y, halfWidth = 1, height = 4) {
+  carveTunnelSlice(x, y, halfWidth + 1, height);
+  shoreTunnel(x, y, halfWidth + 1, height);
+}
+
+function nearbyBurrowMaterial(x, y, halfWidth, height) {
+  for (let dx = -halfWidth - 1; dx <= halfWidth + 1; dx++) {
+    for (let dy = -height; dy <= 2; dy++) {
+      if (burrowMaterial(cellAt(x + dx, y + dy))) return true;
+    }
+  }
+  return false;
+}
+
+function beginSlope(p, x, y) {
+  p.digMode = "slope";
+  p.slopeDir = Math.random() < 0.72 ? 1 : -1; // mostly descend, occasionally climb
+  p.slopeSteps = 9 + Math.random() * 19;
+  p.slopeTick = 0;
+  p.slopeX = x + p.dir * (p.tunnelHalf + 1);
+  p.slopeY = y;
+  p.next = p.t + 85 + Math.random() * 115;
+  carveJunction(x, y, p.tunnelHalf, p.tunnelHeight);
+}
+
+function beginPillar(p, x, y) {
+  p.digMode = "pillar";
+  p.pillarWidth = Math.random() < 0.35 ? 2 : 1;
+  p.pillarX = x + p.dir * (p.tunnelHalf + 1);
+  p.pillarY = y + 1;
+  const tallTower = Math.random() < 0.24;
+  const height = tallTower ? 38 + Math.random() * 48 : 12 + Math.random() * 25;
+  p.pillarTop = Math.max(3, Math.round(y - height));
+  shoreTunnel(x, y, p.tunnelHalf, p.tunnelHeight);
 }
 
 function arcClear(p, vx, vy, ticks) {
@@ -871,35 +922,80 @@ function decide(p) {
     }
 
     case "digger": {
-      if (p.digMode === "shaft") {
+      const halfWidth = p.tunnelHalf, tunnelHeight = p.tunnelHeight;
+      if (p.digMode === "pillar") {
+        p.vx = 0;
+        const py = p.pillarY;
+        for (let w = 0; w < p.pillarWidth; w++) placeSupport(p.pillarX + w, py);
+        if (((py - p.pillarTop) % 7) === 0) {
+          for (let dx = -2; dx <= p.pillarWidth + 1; dx++) placeSupport(p.pillarX + dx, py);
+        }
+        p.pillarY--;
+        if (p.pillarY < p.pillarTop || py <= 3) {
+          p.digMode = "level";
+          p.next = p.t + 75 + Math.random() * 120;
+        }
+      } else if (p.digMode === "shaft") {
         if (!p.digStarted) {
-          if (!p.onGround) break;
+          if (!p.onGround || !nearbyBurrowMaterial(fx, fy + 1, halfWidth, tunnelHeight)) {
+            p.digMode = "level";
+            p.next = p.t + 55 + Math.random() * 80;
+            break;
+          }
           p.digStarted = true;
           p.digStartY = fy;
           if (!p.digDepth) p.digDepth = 10 + Math.random() * 20;
         }
         p.vx = 0;
-        tryDig(fx, fy + 1);
-        tryDig(fx, fy + 2);
-        shoreShaft(fx, fy);
+        if (!nearbyBurrowMaterial(fx, fy + 2, halfWidth, tunnelHeight)) {
+          p.digMode = "level";
+          p.digStarted = false;
+          p.next = p.t + 55 + Math.random() * 80;
+          break;
+        }
+        carveShaftSlice(fx, fy, halfWidth, tunnelHeight);
+        shoreShaft(fx, fy, halfWidth, tunnelHeight);
         if (fy - p.digStartY >= p.digDepth || fy >= H - 8) {
-          carveJunction(fx, fy);
+          carveJunction(fx, fy, halfWidth, tunnelHeight);
           p.digMode = "level";
           p.digStarted = false;
           p.dir = Math.random() < 0.5 ? -1 : 1;
           p.next = p.t + 75 + Math.random() * 115;
         }
+      } else if (p.digMode === "slope") {
+        if (!Number.isFinite(p.slopeX) || !Number.isFinite(p.slopeY)) { p.slopeX = fx; p.slopeY = fy; }
+        if (p.slopeTick === 0 && Math.round(p.slopeX) === fx) p.slopeX = fx + p.dir * (halfWidth + 1);
+        const buildX = Math.round(p.slopeX);
+        p.slopeX += p.dir;
+        const verticalStep = (p.slopeTick++ & 1) === 0 ? p.slopeDir : 0;
+        p.slopeY += verticalStep;
+        const tunnelY = Math.round(p.slopeY);
+        p.desiredVx = 0.17 * p.dir;
+        carveTunnelSlice(buildX, tunnelY, halfWidth, tunnelHeight);
+        shoreTunnel(buildX, tunnelY, halfWidth, tunnelHeight);
+        if (verticalStep < 0 && p.onGround && bodyClear(fx, fy - 1)) {
+          p.y -= 0.6; p.vy = 0;
+        }
+        p.slopeSteps--;
+        if (p.slopeSteps <= 0 || fy >= H - 9 || fy <= tunnelHeight + 2) {
+          carveJunction(fx, Math.round(p.y), halfWidth, tunnelHeight);
+          p.digMode = "level";
+          p.next = p.t + 65 + Math.random() * 115;
+        }
       } else {
         const ax = fx + p.dir;
         let earthAhead = false;
-        for (let look = 1; look <= 2 && !earthAhead; look++) {
-          for (let dy = -3; dy <= 1; dy++) {
-            const c = cellAt(fx + p.dir * look, fy + dy);
-            if (c === E.SAND || c === E.PLANT || c === E.STONE || c === E.GLASS) { earthAhead = true; break; }
+        for (let look = 1; look <= halfWidth + 2 && !earthAhead; look++) {
+          for (let side = -halfWidth; side <= halfWidth; side++) {
+            for (let dy = -tunnelHeight; dy <= 1; dy++) {
+              const c = cellAt(fx + p.dir * look + side, fy + dy);
+              if (burrowMaterial(c)) { earthAhead = true; break; }
+            }
+            if (earthAhead) break;
           }
         }
-        const existingTunnelAhead = cellAt(ax, fy - 3) === E.SUPPORT && cellAt(ax, fy + 1) === E.SUPPORT;
-        const tunnelContinues = cellAt(ax + p.dir, fy - 3) === E.SUPPORT && cellAt(ax + p.dir, fy + 1) === E.SUPPORT;
+        const existingTunnelAhead = cellAt(ax, fy - tunnelHeight) === E.SUPPORT && cellAt(ax, fy + 1) === E.SUPPORT;
+        const tunnelContinues = cellAt(ax + p.dir, fy - tunnelHeight) === E.SUPPORT && cellAt(ax + p.dir, fy + 1) === E.SUPPORT;
         if (!earthAhead) {
           if (existingTunnelAhead && tunnelContinues) p.desiredVx = 0.17 * p.dir;
           else {
@@ -913,19 +1009,24 @@ function decide(p) {
         }
 
         p.desiredVx = 0.19 * p.dir;
-        tryDig(ax, fy); tryDig(ax, fy - 1); tryDig(ax, fy - 2);
-        shoreTunnel(ax, fy);
+        carveTunnelSlice(ax, fy, halfWidth, tunnelHeight);
+        shoreTunnel(ax, fy, halfWidth, tunnelHeight);
         if (p.blocked) {
           if (Math.random() < 0.12) p.dir = -p.dir;
         }
         if (p.onGround && p.t >= p.next) {
-          if (Math.random() < 0.64 && fy < H - 15) {
-            carveJunction(fx, fy);
+          const r = Math.random();
+          if (r < 0.47 && fy < H - 15) {
+            carveJunction(fx, fy, halfWidth, tunnelHeight);
             p.digMode = "shaft";
             p.digStarted = true;
             p.digStartY = fy;
             p.digDepth = 9 + Math.random() * 20;
-            tryDig(fx, fy + 1);
+            carveShaftSlice(fx, fy, halfWidth, tunnelHeight);
+          } else if (r < 0.78) {
+            beginSlope(p, fx, fy);
+          } else if (r < 0.91) {
+            beginPillar(p, fx, fy);
           } else {
             p.dir = -p.dir;
             p.next = p.t + 70 + Math.random() * 125;
@@ -1243,11 +1344,72 @@ function updatePeople() {
 // ---------- rendering ----------
 
 const canvas = document.getElementById("world");
-canvas.width = W;
-canvas.height = H;
+canvas.width = VIEW_W;
+canvas.height = VIEW_H;
 const ctx = canvas.getContext("2d");
-const img = ctx.createImageData(W, H);
+ctx.imageSmoothingEnabled = false;
+
+// Draw the complete world off-screen, then crop it into the compact viewport.
+// This preserves the crisp original presentation while making the world larger
+// than the screen and practical to explore.
+const worldBuffer = document.createElement("canvas");
+worldBuffer.width = W;
+worldBuffer.height = H;
+const worldCtx = worldBuffer.getContext("2d");
+worldCtx.imageSmoothingEnabled = false;
+const img = worldCtx.createImageData(W, H);
 const px = img.data;
+
+const minimap = document.getElementById("minimap");
+minimap.width = 132;
+minimap.height = 88;
+const minimapCtx = minimap.getContext("2d");
+minimapCtx.imageSmoothingEnabled = false;
+const viewInfo = document.getElementById("view-info");
+
+const MIN_ZOOM = Math.max(VIEW_W / W, VIEW_H / H);
+const MAX_ZOOM = 2.75;
+let cameraZoom = MIN_ZOOM;
+let cameraX = W * 0.5;
+let cameraY = H * 0.55;
+
+function clampCamera() {
+  const viewW = Math.min(W, VIEW_W / cameraZoom);
+  const viewH = Math.min(H, VIEW_H / cameraZoom);
+  cameraX = Math.max(viewW * 0.5, Math.min(W - viewW * 0.5, cameraX));
+  cameraY = Math.max(viewH * 0.5, Math.min(H - viewH * 0.5, cameraY));
+}
+
+function cameraRect() {
+  clampCamera();
+  const width = Math.min(W, VIEW_W / cameraZoom);
+  const height = Math.min(H, VIEW_H / cameraZoom);
+  return { x: cameraX - width * 0.5, y: cameraY - height * 0.5, width, height };
+}
+
+function updateViewInfo() {
+  viewInfo.textContent = `${Math.round(cameraZoom * 100)}% view`;
+}
+
+function resetCamera() {
+  cameraZoom = MIN_ZOOM;
+  cameraX = W * 0.5;
+  cameraY = H * 0.5;
+  updateViewInfo();
+}
+
+function renderMinimap(view) {
+  minimapCtx.clearRect(0, 0, minimap.width, minimap.height);
+  minimapCtx.drawImage(worldBuffer, 0, 0, W, H, 0, 0, minimap.width, minimap.height);
+  minimapCtx.strokeStyle = "rgba(255, 232, 175, 0.95)";
+  minimapCtx.lineWidth = 1;
+  minimapCtx.strokeRect(
+    view.x / W * minimap.width + 0.5,
+    view.y / H * minimap.height + 0.5,
+    Math.max(1, view.width / W * minimap.width - 1),
+    Math.max(1, view.height / H * minimap.height - 1),
+  );
+}
 
 // [r, g, b, variation]
 const COLORS = [];
@@ -1392,7 +1554,11 @@ function render() {
   }
   drawPeople();
   drawDeaths();
-  ctx.putImageData(img, 0, 0);
+  worldCtx.putImageData(img, 0, 0);
+  const view = cameraRect();
+  ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+  ctx.drawImage(worldBuffer, view.x, view.y, view.width, view.height, 0, 0, VIEW_W, VIEW_H);
+  renderMinimap(view);
 }
 
 // ---------- painting ----------
@@ -1436,15 +1602,26 @@ function paintLine(x0, y0, x1, y1, elem) {
 }
 
 let painting = false, strokeElement = E.SAND, lastX = 0, lastY = 0;
+let panning = false, panLastX = 0, panLastY = 0;
 let pastePattern = null;   // active Game-of-Life preset, stamped on left-click
 let peopleAccum = 0;       // distance accumulator, so a drag spreads people out
 
 function canvasCoords(ev) {
   const rect = canvas.getBoundingClientRect();
+  const view = cameraRect();
   return [
-    Math.floor((ev.clientX - rect.left) / rect.width * W),
-    Math.floor((ev.clientY - rect.top) / rect.height * H),
+    Math.max(0, Math.min(W - 1, Math.floor(view.x + (ev.clientX - rect.left) / rect.width * view.width))),
+    Math.max(0, Math.min(H - 1, Math.floor(view.y + (ev.clientY - rect.top) / rect.height * view.height))),
   ];
+}
+
+function panByScreen(deltaX, deltaY) {
+  const rect = canvas.getBoundingClientRect();
+  const view = cameraRect();
+  cameraX -= deltaX / rect.width * view.width;
+  cameraY -= deltaY / rect.height * view.height;
+  clampCamera();
+  updateViewInfo();
 }
 
 // drop a preset centered on (cx, cy), into empty air only so terrain survives
@@ -1463,6 +1640,13 @@ function stampPattern(cx, cy, coords) {
 canvas.addEventListener("pointerdown", (ev) => {
   ev.preventDefault();
   canvas.setPointerCapture(ev.pointerId);
+  if (ev.button === 1 || (ev.button === 0 && ev.shiftKey)) {
+    panning = true;
+    panLastX = ev.clientX;
+    panLastY = ev.clientY;
+    canvas.classList.add("panning");
+    return;
+  }
   closeMenu();
   const [x, y] = canvasCoords(ev);
   if (pastePattern && ev.button === 0) { stampPattern(x, y, pastePattern); return; }
@@ -1477,6 +1661,12 @@ canvas.addEventListener("pointerdown", (ev) => {
 });
 
 canvas.addEventListener("pointermove", (ev) => {
+  if (panning) {
+    panByScreen(ev.clientX - panLastX, ev.clientY - panLastY);
+    panLastX = ev.clientX;
+    panLastY = ev.clientY;
+    return;
+  }
   if (!painting) return;
   const [x, y] = canvasCoords(ev);
   if (strokeElement === PEOPLE) {
@@ -1489,10 +1679,31 @@ canvas.addEventListener("pointermove", (ev) => {
   lastX = x; lastY = y;
 });
 
-const endStroke = () => { painting = false; };
+const endStroke = () => {
+  painting = false;
+  panning = false;
+  canvas.classList.remove("panning");
+};
 canvas.addEventListener("pointerup", endStroke);
 canvas.addEventListener("pointercancel", endStroke);
 canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
+canvas.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const oldView = cameraRect();
+  const fx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+  const fy = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
+  const anchorX = oldView.x + oldView.width * fx;
+  const anchorY = oldView.y + oldView.height * fy;
+  const multiplier = ev.deltaY < 0 ? 1.16 : 1 / 1.16;
+  cameraZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cameraZoom * multiplier));
+  const newW = Math.min(W, VIEW_W / cameraZoom);
+  const newH = Math.min(H, VIEW_H / cameraZoom);
+  cameraX = anchorX + (0.5 - fx) * newW;
+  cameraY = anchorY + (0.5 - fy) * newH;
+  clampCamera();
+  updateViewInfo();
+}, { passive: false });
 
 // ---------- palette + anchored popover menus ----------
 
@@ -1616,7 +1827,9 @@ function setPaused(p) {
 }
 pauseBtn.addEventListener("click", () => setPaused(!paused));
 document.getElementById("btn-step").addEventListener("click", () => { step(); });
+document.getElementById("btn-overview").addEventListener("click", resetCamera);
 document.getElementById("btn-clear").addEventListener("click", clearWorld);
+updateViewInfo();
 
 function clearWorld() {
   cells.fill(E.EMPTY);
@@ -1630,6 +1843,7 @@ document.addEventListener("keydown", (ev) => {
   if (ev.target instanceof HTMLInputElement) return;
   if (ev.key === " ") { ev.preventDefault(); setPaused(!paused); return; }
   if (ev.key === ".") { step(); return; }
+  if (ev.key === "f" || ev.key === "F") { resetCamera(); return; }
   if (ev.key === "c" || ev.key === "C") { clearWorld(); return; }
   if (ev.key === "[") { brushSlider.value = String(Math.max(1, brushRadius - 1)); brushSlider.dispatchEvent(new Event("input")); return; }
   if (ev.key === "]") { brushSlider.value = String(Math.min(16, brushRadius + 1)); brushSlider.dispatchEvent(new Event("input")); return; }
@@ -1733,39 +1947,104 @@ subLabels.get(PEOPLE).textContent = PTYPES[peopleType].label;
 selectElement(E.SAND);
 
 function seedWorld() {
-  // sand dunes, bottom-left
-  for (let x = 0; x < 150; x++) {
-    const h = 22 + Math.sin(x * 0.045) * 14 + Math.sin(x * 0.11 + 2) * 6;
-    fillRect(x, H - 1 - Math.round(h), x, H - 1, E.SAND);
+  // A fixed seam of bedrock lets the opening regions evolve without draining
+  // off the bottom of the map. Each section is deliberately a little
+  // self-contained: players can explore it, then connect or rupture it.
+  fillRect(0, H - 7, W - 1, H - 1, E.WALL);
+
+  // WEST: Sunstone dunes, a generous loose-material source for builders.
+  for (let x = 0; x < 118; x++) {
+    const h = 34 + Math.sin(x * 0.058) * 18 + Math.sin(x * 0.15 + 1.6) * 8;
+    fillRect(x, H - 8 - Math.round(h), x, H - 8, E.SAND);
   }
-  // walled water basin, bottom-right, with an oil slick on top
-  fillRect(185, 152, 187, H - 1, E.WALL);
-  fillRect(188, 168, W - 1, H - 1, E.WATER);
-  fillRect(215, 163, 260, 167, E.OIL, 0.9);
-  // garden ledge with plants
-  fillRect(35, 108, 105, 110, E.WALL);
-  fillRect(42, 100, 98, 107, E.PLANT, 0.35);
-  fillRect(50, 94, 90, 99, E.PLANT, 0.15);
-  // a few floating platforms for the platformer folks to find
-  fillRect(120, 130, 150, 132, E.WALL);
-  fillRect(150, 112, 178, 114, E.WALL);
-  fillRect(96, 150, 120, 152, E.WALL);
-  // lava shelf, upper right — poke a hole in it and see what happens
-  fillRect(205, 62, 265, 64, E.WALL);
-  fillRect(203, 48, 205, 61, E.WALL);
-  fillRect(265, 48, 267, 61, E.WALL);
-  fillRect(206, 54, 264, 61, E.LAVA);
-  // ice ridge, upper left
-  fillRect(20, 40, 70, 46, E.ICE, 0.85);
-  // a glider gun floating in the open sky, streaming life toward the world below
-  placePattern(120, 8, GLIDER_GUN, E.LIFE);
-  // a small welcoming crowd on the dunes
-  for (let n = 0; n < 8; n++) spawnPerson(10 + n * 15, 150, "wanderer");
-  spawnPerson(60, 150, "adventurer");
-  spawnPerson(30, 150, "platformer");
-  spawnPerson(90, 150, "daredevil");
-  spawnPerson(122, 150, "digger");
-  spawnPerson(198, 158, "swimmer");
+  fillRect(4, 279, 8, H - 8, E.WALL);
+  fillRect(112, 267, 116, H - 8, E.WALL);
+  fillRect(86, 244, 110, 250, E.STONE, 0.72);
+
+  // NORTHWEST: Frost Shelf — an iced-over meltwater basin and a slippery ridge.
+  fillRect(10, 150, 108, 154, E.WALL);
+  fillRect(18, 140, 101, 149, E.ICE, 0.86);
+  fillRect(18, 178, 22, 220, E.WALL);
+  fillRect(101, 178, 105, 220, E.WALL);
+  fillRect(22, 216, 101, 220, E.WALL);
+  fillRect(23, 192, 100, 215, E.WATER);
+  fillRect(29, 185, 84, 191, E.ICE, 0.82);
+  fillRect(47, 162, 76, 165, E.WALL);
+
+  // SOUTH-CENTRE: Verdant terraces with a little irrigation cut through them.
+  fillRect(120, 277, 257, 281, E.WALL);
+  fillRect(132, 249, 242, 253, E.WALL);
+  fillRect(151, 222, 225, 226, E.WALL);
+  fillRect(122, 252, 241, 276, E.PLANT, 0.30);
+  fillRect(144, 226, 224, 248, E.PLANT, 0.23);
+  fillRect(132, 251, 137, 276, E.WALL);
+  fillRect(236, 251, 241, 276, E.WALL);
+  fillRect(163, 235, 169, 248, E.WATER);
+  fillRect(170, 244, 219, 248, E.WATER);
+  fillRect(119, 276, 123, H - 8, E.WALL);
+  fillRect(254, 276, 258, H - 8, E.WALL);
+
+  // CENTRE: Skyworks — overlapping platforms, a life observatory, and routes
+  // with several viable landings for platformers and flyers.
+  fillRect(132, 205, 170, 208, E.WALL);
+  fillRect(172, 177, 218, 180, E.WALL);
+  fillRect(222, 151, 262, 154, E.WALL);
+  fillRect(273, 178, 307, 181, E.WALL);
+  fillRect(244, 204, 286, 207, E.WALL);
+  fillRect(188, 128, 225, 131, E.WALL);
+  fillRect(237, 104, 270, 107, E.WALL);
+  fillRect(153, 157, 158, 204, E.WALL);
+  fillRect(291, 153, 296, 204, E.WALL);
+  fillRect(182, 183, 206, 185, E.SUPPORT);
+  fillRect(246, 209, 274, 211, E.SUPPORT);
+  placePattern(202, 20, GLIDER_GUN, E.LIFE);
+  placePattern(232, 116, PRESETS.beacon.cells, E.LIFE);
+  placePattern(279, 164, PRESETS.glider.cells, E.LIFE);
+
+  // NORTHEAST: Ember Foundry. Its floor is intentionally pierceable from
+  // below, so it can become a lavafall into the rift if someone opens it.
+  fillRect(324, 91, 429, 95, E.WALL);
+  fillRect(321, 58, 326, 94, E.WALL);
+  fillRect(427, 58, 432, 94, E.WALL);
+  fillRect(326, 73, 426, 90, E.LAVA);
+  fillRect(338, 65, 412, 70, E.SAND, 0.72);
+  fillRect(355, 52, 390, 55, E.WALL);
+  fillRect(360, 47, 386, 51, E.STONE, 0.70);
+
+  // SOUTHEAST: Blue Rift, a broad water-and-oil lake with a garden island.
+  fillRect(263, 241, 268, H - 8, E.WALL);
+  fillRect(398, 241, 403, H - 8, E.WALL);
+  fillRect(267, 309, 399, H - 8, E.WALL);
+  fillRect(269, 263, 397, 308, E.WATER);
+  fillRect(279, 256, 348, 262, E.OIL, 0.90);
+  fillRect(326, 283, 352, 308, E.WALL);
+  fillRect(329, 277, 349, 282, E.SAND);
+  fillRect(334, 272, 346, 276, E.PLANT, 0.44);
+  fillRect(273, 247, 321, 250, E.WALL);
+  fillRect(370, 247, 394, 250, E.WALL);
+
+  // FAR EAST: a glass-lined acid cavern beneath a rough stone overhang.
+  fillRect(411, 228, 416, H - 8, E.WALL);
+  fillRect(475, 228, 479, H - 8, E.WALL);
+  fillRect(415, 292, 475, 297, E.GLASS);
+  fillRect(421, 255, 469, 291, E.ACID);
+  fillRect(421, 247, 469, 252, E.GLASS);
+  fillRect(433, 205, 472, 211, E.STONE, 0.78);
+  fillRect(445, 216, 470, 220, E.WALL);
+  fillRect(419, 270, 424, 290, E.GLASS);
+
+  // A population spread through the regions makes the opening world readable
+  // immediately, while still leaving abundant open space for experiments.
+  for (let n = 0; n < 7; n++) spawnPerson(16 + n * 13, 228, "wanderer");
+  spawnPerson(92, 225, "digger");
+  spawnPerson(144, 245, "adventurer");
+  spawnPerson(188, 174, "platformer");
+  spawnPerson(238, 148, "platformer");
+  spawnPerson(277, 173, "daredevil");
+  spawnPerson(283, 258, "swimmer");
+  spawnPerson(338, 270, "wanderer");
+  spawnPerson(383, 244, "platformer");
+  spawnPerson(441, 224, "adventurer");
 }
 
 seedWorld();

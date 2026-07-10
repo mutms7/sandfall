@@ -1,6 +1,6 @@
 # Sandfall
 
-A tiny falling-sand alchemy sandbox in a single canvas. No framework, no build step, just HTML/CSS/JS. Paint elements onto a 300x200 grid, drop in a few little people, and watch it all interact via simple local rules.
+A tiny falling-sand alchemy sandbox in a single canvas. No framework, no build step, just HTML/CSS/JS. Paint elements onto a 480x320 world, drop in a few little people, and watch it all interact via simple local rules. The screen starts as a full-world overview, then you can zoom into any region without giving up the crisp 3:2 pixel view.
 
 The title up top isn't an image, it's a second little sim: each letter of **SANDFALL** is drawn out of a different ingredient (sand, water, plant, lava, fire, acid, ice, and life), rained into place, held, then collapsed and rebuilt on a loop.
 
@@ -46,7 +46,7 @@ The **people** aren't cells, they're small agents that walk the terrain, obey gr
 | **adventurer** | Roams in bursts, vaulting walls and gaps, then pauses before setting off again. |
 | **platformer** | Chooses a genuinely lateral landing, solves a compact ballistic arc, and varies between several arc shapes. Recent platforms stay in memory so it does not bounce in the same two-stop loop. Its reach and launch power are roughly half the original long-jump version. |
 | **daredevil** | No longer jumps. It plans a safe coarse-grid route to a distant landing, then follows it with powered lift, partial gravity, changing speed, banking, and swooping. It replans around new obstacles; an actual high-speed impact is fatal. |
-| **digger** | Sometimes begins with a straight vertical shaft, braces its sides, cuts a small junction, then grows narrow horizontal branches. Every branch gets a continuous wooden platform above and below instead of becoming a broad excavated cavity. |
+| **builder** | Sometimes begins with a broad vertical shaft, braces its sides, then cuts wide horizontal branches. Other times it makes stepped diagonal tunnels, and occasionally it stays put to raise a tall, cross-braced support pillar like a mine shaft. Branches get continuous wooden platforms above and below. |
 | **swimmer** | Seeks out water and paddles at the surface. It can hold its breath much longer than everyone else, but can still drown. |
 
 Ice has almost no stopping friction: a person can finish walking and keep sliding in the same direction until terrain, friction, or a new decision changes the motion. Ordinary ground brings them to a stop.
@@ -58,6 +58,7 @@ Pick a kind from the menu, then **click or drag** on the canvas to drop people (
 ## Controls
 
 - **Left-drag** paints the selected element or drops people, **right-drag** erases
+- **Wheel** zooms toward the cursor; **middle-drag** (or **Shift + left-drag**) pans; **F** or **view** returns to the whole-world overview
 - **1–0** select elements, **g** life, **p** people, **e** the eraser
 - Click **life** or **people** for a menu of variants (Game of Life patterns / kinds of person)
 - **[** and **]** shrink and grow the brush
@@ -70,6 +71,8 @@ Spaceships (glider, lightweight spaceship) that travel, oscillators (toad, beaco
 
 ## Things worth trying
 
+- Start at the overview and use the minimap to visit the **Sunstone Dunes**, **Frost Shelf**, **Verdant Terraces**, **Skyworks**, **Ember Foundry**, **Blue Rift**, and glass-lined **Acid Cavern**. Each starts with a different palette of materials, terrain, and opportunities for a messy connection.
+- Zoom into the Ember Foundry, then cut an exit through its floor toward the Blue Rift. Lava, water, oil, steam, stone, and glass make the route change character as it opens up.
 - Poke a hole in the lava shelf's floor and let it drip into the water basin below: instant steam plumes and a growing stone stalagmite.
 - Drop fire on the oil slick floating in the basin, then watch the steam rise and rain back down.
 - Draw a line of water through the garden and watch the plants swallow it.
@@ -78,7 +81,7 @@ Spaceships (glider, lightweight spaceship) that travel, oscillators (toad, beaco
 - Pause (space), paint your own Game of Life pattern with **g**, then tap **.** to step through generations one at a time.
 - Set a plant garden on fire directly beneath the gun and watch the two automata (chemistry and Conway) run side by side.
 - Drop a crowd of **wanderers** on the dunes, then pour water beside them and add a couple of **swimmers**. Watch who goes where.
-- Set a **digger** loose on a tall sand dune and watch a narrow shaft open into paired, braced ant-tunnel branches. Burn the wooden bracing afterward if you want the cave-in after all.
+- Set a **builder** loose on a tall sand dune and watch it mix wide shafts, stepped angled branches, and occasional mine-shaft pillars. Burn the wooden bracing afterward if you want the cave-in after all.
 - Scatter several nearby platforms and drop a **platformer** on one. It varies its compact arcs and remembers where it has just been instead of repeating a two-platform cycle.
 - Spawn **daredevils** beside a wall and watch them bank and swoop around it, slow for a deliberate landing, and loiter before flying again. Add a wall mid-flight to test their replanning—or their impact tolerance.
 - Make a moving Life spaceship wide enough to stand on and place a person above it. Riders follow the shifting cells until the pattern breaks apart beneath them.
@@ -86,10 +89,10 @@ Spaceships (glider, lightweight spaceship) that travel, oscillators (toad, beaco
 
 ## How it works
 
-The world is a flat `Uint8Array`, one element id per cell, updated bottom-up once per frame. The scan direction alternates each row and frame to avoid directional bias, and a per-cell frame stamp prevents anything from moving twice in one tick. Powders fall and slide, liquids disperse sideways with per-element viscosity, gases rise and decay, and everything else is neighborhood reactions with small probabilities. Rendering writes RGBA directly into an `ImageData` at grid resolution and lets CSS scale it up with `image-rendering: pixelated`.
+The world is a flat `Uint8Array`, one element id per cell, updated bottom-up once per frame. The scan direction alternates each row and frame to avoid directional bias, and a per-cell frame stamp prevents anything from moving twice in one tick. Powders fall and slide, liquids disperse sideways with per-element viscosity, gases rise and decay, and everything else is neighborhood reactions with small probabilities. Rendering writes RGBA directly into a full-world `ImageData`, crops it through a movable camera, and draws a small minimap with the camera rectangle so the 480x320 world remains easy to navigate.
 
 The `life` element is the exception to the in-place scan: Conway's Game of Life demands a *simultaneous* update, so it runs as its own pass every few frames, counting live neighbors from the current grid into a scratch buffer and then applying births and deaths all at once. It reuses the per-cell `life` byte as a cell's age, which drives the color gradient from newborn white-cyan to aged teal.
 
-The **people** are the other exception. They're not cells at all, just a list of little agents with floating-point positions, velocities, oxygen, health, support tracking, and role-specific state. Each frame they read the grid, make a decision, run swept collision so jumps and flights cannot skip thin platforms, react to hazards, and get painted directly over the finished world buffer. Platformers rank nearby destinations with recent-platform memory and select among multiple compact ballistic solutions. Daredevils run a coarse A* search, retain short waypoints, and use inertial steering plus gravity to curve through the safe corridor; the same swept check turns fast impacts into deaths. Diggers alternate supported vertical shafts, small junction chambers, and paired-beam horizontal branches. Short-lived death records render the cause-specific animations after an agent is removed.
+The **people** are the other exception. They're not cells at all, just a list of little agents with floating-point positions, velocities, oxygen, health, support tracking, and role-specific state. Each frame they read the grid, make a decision, run swept collision so jumps and flights cannot skip thin platforms, react to hazards, and get painted directly over the finished world buffer. Platformers rank nearby destinations with recent-platform memory and select among multiple compact ballistic solutions. Daredevils run a coarse A* search, retain short waypoints, and use inertial steering plus gravity to curve through the safe corridor; the same swept check turns fast impacts into deaths. Builders alternate broad supported shafts, wider branches, stepped diagonal paths, and occasional cross-braced pillars; ordinary shaft framing stops once it leaves material so only pillar projects rise into open air. Short-lived death records render the cause-specific animations after an agent is removed.
 
 The **logo** is a completely separate miniature falling-sand sim. A 5x7 bitmap font marks out which pixels each letter needs; every one of those becomes a grain that rains down into place, colored and shimmering by whichever ingredient that letter is made of. Once the whole word has landed it holds for a few seconds, then the grains let go and fall away, and it rebuilds itself, forever.
