@@ -28,12 +28,13 @@ python -m http.server 8123 -d .
 | **stone** | Falls straight down like rubble. Dissolvable by acid, otherwise inert. |
 | **acid** | Eats sand, stone, plants, oil, and ice. Water dilutes it. Walls and glass resist it. |
 | **ice** | Static. Slowly freezes neighboring water, melts near fire and lava. |
+| **life** | Floats in place and evolves by [Conway's Game of Life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life). Births need empty air, so terrain, water and sand are walls that gliders shatter against. Fragile: fire, lava and acid destroy it. New cells glow bright cyan, aging to deep teal. |
 | smoke / steam / glass | Byproducts. Smoke dissipates, steam rises and sometimes condenses back into rain, glass is what lava leaves behind in sand. |
 
 ## Controls
 
 - **Left-drag** paints the selected element, **right-drag** erases
-- **1–0** select elements, **e** selects the eraser
+- **1–0** select elements, **g** selects life, **e** selects the eraser
 - **[** and **]** shrink and grow the brush
 - **Space** pauses, **.** advances one frame, **c** clears the world
 
@@ -43,7 +44,12 @@ python -m http.server 8123 -d .
 - Drop fire on the oil slick floating in the basin, then watch the steam rise and rain back down.
 - Draw a line of water through the garden and watch the plants swallow it.
 - Pour acid on the sand dunes. Feel bad about it.
+- Watch the glider gun in the sky: its gliders drift down and disintegrate the instant they hit terrain. Drop a wall in their path and build a life-catcher.
+- Pause (space), paint your own Game of Life pattern with **g**, then tap **.** to step through generations one at a time.
+- Set a plant garden on fire directly beneath the gun and watch the two automata (chemistry and Conway) run side by side.
 
 ## How it works
 
 The world is a flat `Uint8Array`, one element id per cell, updated bottom-up once per frame. The scan direction alternates each row and frame to avoid directional bias, and a per-cell frame stamp prevents anything from moving twice in one tick. Powders fall and slide, liquids disperse sideways with per-element viscosity, gases rise and decay, and everything else is neighborhood reactions with small probabilities. Rendering writes RGBA directly into an `ImageData` at grid resolution and lets CSS scale it up with `image-rendering: pixelated`.
+
+The `life` element is the exception to the in-place scan: Conway's Game of Life demands a *simultaneous* update, so it runs as its own pass every few frames, counting live neighbors from the current grid into a scratch buffer and then applying births and deaths all at once. It reuses the per-cell `life` byte as a cell's age, which drives the color gradient from newborn white-cyan to aged teal.

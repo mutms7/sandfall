@@ -12,6 +12,7 @@ const N = W * H;
 const E = {
   EMPTY: 0, WALL: 1, SAND: 2, WATER: 3, OIL: 4, FIRE: 5, SMOKE: 6,
   STEAM: 7, PLANT: 8, LAVA: 9, STONE: 10, ACID: 11, ICE: 12, GLASS: 13,
+  LIFE: 14,
 };
 const ERASER = -1;
 
@@ -19,7 +20,10 @@ const cells = new Uint8Array(N);   // element id per cell
 const life = new Uint8Array(N);    // countdown for fire / smoke / steam
 const shade = new Uint8Array(N);   // per-cell color variation, fixed at spawn
 const stamp = new Uint32Array(N);  // frame a cell last moved (skip double updates)
+const lifeNext = new Uint8Array(N); // scratch buffer for the next GoL generation
 let frame = 0;
+
+const LIFE_PERIOD = 6; // frames between Game-of-Life generations (lower = faster)
 
 // lookup tables (arrays beat Sets in the hot loop)
 const IS_LIQUID = new Uint8Array(16);
@@ -30,7 +34,7 @@ const DENSITY = new Uint8Array(16);
 DENSITY[E.OIL] = 2; DENSITY[E.WATER] = 3; DENSITY[E.ACID] = 3; DENSITY[E.LAVA] = 4;
 const DISSOLVES = new Uint8Array(16); // what acid can eat
 DISSOLVES[E.SAND] = DISSOLVES[E.STONE] = DISSOLVES[E.PLANT] =
-  DISSOLVES[E.OIL] = DISSOLVES[E.ICE] = 1;
+  DISSOLVES[E.OIL] = DISSOLVES[E.ICE] = DISSOLVES[E.LIFE] = 1;
 
 const NEIGHBORS4 = [[0, -1], [0, 1], [-1, 0], [1, 0]];
 const NEIGHBORS8 = [[0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]];
@@ -121,6 +125,7 @@ function updateFire(x, y, i) {
     if (t === E.PLANT && Math.random() < 0.10) setCell(j, E.FIRE, 30 + Math.random() * 30);
     else if (t === E.OIL && Math.random() < 0.35) setCell(j, E.FIRE, 25 + Math.random() * 25);
     else if (t === E.ICE && Math.random() < 0.3) setCell(j, E.WATER);
+    else if (t === E.LIFE) setCell(j, Math.random() < 0.5 ? E.SMOKE : E.EMPTY, 10 + Math.random() * 10);
   }
   if (life[i] <= 1) {
     setCell(i, Math.random() < 0.5 ? E.SMOKE : E.EMPTY, 20 + Math.random() * 40);
@@ -179,6 +184,7 @@ function updateLava(x, y, i) {
     if (t === E.SAND && Math.random() < 0.02) setCell(j, E.GLASS);
     else if ((t === E.PLANT || t === E.OIL) && Math.random() < 0.4) setCell(j, E.FIRE, 30 + Math.random() * 30);
     else if (t === E.ICE && Math.random() < 0.5) setCell(j, E.WATER);
+    else if (t === E.LIFE) setCell(j, E.FIRE, 15 + Math.random() * 15);
   }
   // spit the occasional spark
   if (y > 0 && Math.random() < 0.005) {
@@ -211,6 +217,36 @@ function updateIce(x, y, i) {
   }
 }
 
+// Conway's Game of Life, run as one simultaneous generation from a snapshot.
+// LIFE is the only "alive" element; births land only in empty air, so terrain,
+// water and sand form walls that gliders shatter against. life[] doubles as age.
+function stepLife() {
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      let n = 0;
+      for (let d = 0; d < 8; d++) {
+        const nx = x + NEIGHBORS8[d][0], ny = y + NEIGHBORS8[d][1];
+        if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+        if (cells[nx + ny * W] === E.LIFE) n++;
+      }
+      const c = cells[i];
+      if (c === E.LIFE) lifeNext[i] = (n === 2 || n === 3) ? 1 : 0;
+      else if (c === E.EMPTY) lifeNext[i] = (n === 3) ? 1 : 0;
+      else lifeNext[i] = 0; // occupied by matter: no room to be born
+    }
+  }
+  for (let i = 0; i < N; i++) {
+    const wasLife = cells[i] === E.LIFE;
+    if (lifeNext[i]) {
+      if (wasLife) { if (life[i] < 250) life[i]++; } // survivor ages
+      else setCell(i, E.LIFE, 0);                    // newborn
+    } else if (wasLife) {
+      setCell(i, E.EMPTY);                           // starved or overcrowded
+    }
+  }
+}
+
 function step() {
   frame++;
   for (let y = H - 1; y >= 0; y--) {
@@ -234,6 +270,7 @@ function step() {
       }
     }
   }
+  if (frame % LIFE_PERIOD === 0) stepLife();
 }
 
 // ---------- rendering ----------
@@ -275,6 +312,12 @@ function render() {
     } else if (e === E.STEAM) {
       const v = 120 + (life[i] >> 1) + (shade[i] & 15);
       r = v; g = v + 6; b = v + 12;
+    } else if (e === E.LIFE) {
+      const t = life[i] > 40 ? 1 : life[i] / 40; // 0 newborn -> 1 old
+      const flick = shade[i] & 15;
+      r = 150 - t * 110 + flick;        // bright cyan-white fading to deep teal
+      g = 255 - t * 60;
+      b = 220 - t * 70 + (flick >> 1);
     } else {
       const c = COLORS[e];
       const v = c[3] === 0 ? 0 : ((shade[i] / 255) - 0.5) * 2 * c[3];
@@ -304,6 +347,8 @@ function stampBrush(cx, cy, elem) {
         if (t !== E.EMPTY) setCell(i, E.EMPTY);
       } else if (elem === E.WALL || elem === E.PLANT || elem === E.ICE || elem === E.STONE) {
         if (t !== elem) setCell(i, elem);
+      } else if (elem === E.LIFE) {
+        if (t === E.EMPTY) setCell(i, E.LIFE); // seed patterns into open air only
       } else if (elem === E.FIRE) {
         if (t === E.EMPTY || t === E.OIL || t === E.PLANT || t === E.ICE) {
           setCell(i, E.FIRE, 40 + Math.random() * 40);
@@ -367,6 +412,7 @@ const PALETTE = [
   { e: E.STONE, label: "stone", key: "8" },
   { e: E.ACID, label: "acid", key: "9" },
   { e: E.ICE, label: "ice", key: "0" },
+  { e: E.LIFE, label: "life", key: "g" },
   { e: ERASER, label: "erase", key: "e" },
 ];
 
@@ -374,7 +420,7 @@ const SWATCH = {
   [E.SAND]: "#e0b060", [E.WATER]: "#2a6cd4", [E.WALL]: "#5a5f6a",
   [E.PLANT]: "#3ea04e", [E.FIRE]: "#ff8c28", [E.OIL]: "#684e30",
   [E.LAVA]: "#e04a12", [E.STONE]: "#8a8d94", [E.ACID]: "#80de2a",
-  [E.ICE]: "#a8d8f0", [ERASER]: "#05060a",
+  [E.ICE]: "#a8d8f0", [E.LIFE]: "#7cffd8", [ERASER]: "#05060a",
 };
 
 const paletteEl = document.getElementById("palette");
@@ -440,6 +486,24 @@ function fillRect(x0, y0, x1, y1, e, prob = 1) {
   }
 }
 
+// Gosper glider gun: a stable oscillator that emits a glider every 30 gens,
+// each drifting toward the bottom-right. Coords relative to the pattern's corner.
+const GLIDER_GUN = [
+  [0, 4], [0, 5], [1, 4], [1, 5],
+  [10, 4], [10, 5], [10, 6], [11, 3], [11, 7], [12, 2], [12, 8], [13, 2], [13, 8],
+  [14, 5], [15, 3], [15, 7], [16, 4], [16, 5], [16, 6], [17, 5],
+  [20, 2], [20, 3], [20, 4], [21, 2], [21, 3], [21, 4], [22, 1], [22, 5],
+  [24, 0], [24, 1], [24, 5], [24, 6], [34, 2], [34, 3], [35, 2], [35, 3],
+];
+
+function placePattern(ox, oy, coords, e) {
+  for (const [dx, dy] of coords) {
+    const x = ox + dx, y = oy + dy;
+    if (x < 0 || x >= W || y < 0 || y >= H) continue;
+    setCell(idx(x, y), e);
+  }
+}
+
 function seedWorld() {
   // sand dunes, bottom-left
   for (let x = 0; x < 150; x++) {
@@ -461,6 +525,8 @@ function seedWorld() {
   fillRect(206, 54, 264, 61, E.LAVA);
   // ice ridge, upper left
   fillRect(20, 40, 70, 46, E.ICE, 0.85);
+  // a glider gun floating in the open sky, streaming life toward the world below
+  placePattern(120, 8, GLIDER_GUN, E.LIFE);
 }
 
 seedWorld();
