@@ -7,16 +7,17 @@
 // ============================================================
 
 // ---------- world ----------
-// The simulation is deliberately much larger than the visible camera. A 3:2
-// viewport keeps the old canvas feel while letting the world stretch beyond it.
-const W = 480, H = 320;
-const VIEW_W = 300, VIEW_H = 200;
+// A wide side-scrolling world at the original 200-tall resolution. The camera is
+// a fixed 1:1 window that pans horizontally (WASD / drag / wheel) — no zoom, so
+// every pixel is always drawn at full size, which keeps Game of Life crisp.
+const W = 900, H = 200;
+const VIEW_W = 450, VIEW_H = 200;
 const N = W * H;
 
 const E = {
   EMPTY: 0, WALL: 1, SAND: 2, WATER: 3, OIL: 4, FIRE: 5, SMOKE: 6,
   STEAM: 7, PLANT: 8, LAVA: 9, STONE: 10, ACID: 11, ICE: 12, GLASS: 13,
-  LIFE: 14, SUPPORT: 15,
+  LIFE: 14, SUPPORT: 15, WOOD: 16,
 };
 const ERASER = -1;
 const PEOPLE = 100; // a tool sentinel, never stored in the cell grid
@@ -30,22 +31,26 @@ let frame = 0;
 
 const LIFE_PERIOD = 6; // frames between Game-of-Life generations (lower = faster)
 
-// lookup tables (arrays beat Sets in the hot loop)
-const IS_LIQUID = new Uint8Array(16);
+// lookup tables (arrays beat Sets in the hot loop); sized past the last id
+const IS_LIQUID = new Uint8Array(32);
 IS_LIQUID[E.WATER] = IS_LIQUID[E.OIL] = IS_LIQUID[E.LAVA] = IS_LIQUID[E.ACID] = 1;
-const IS_GAS = new Uint8Array(16);
+const IS_GAS = new Uint8Array(32);
 IS_GAS[E.SMOKE] = IS_GAS[E.STEAM] = 1;
-const DENSITY = new Uint8Array(16);
+const DENSITY = new Uint8Array(32);
 DENSITY[E.OIL] = 2; DENSITY[E.WATER] = 3; DENSITY[E.ACID] = 3; DENSITY[E.LAVA] = 4;
-const DISSOLVES = new Uint8Array(16); // what acid can eat
+const DISSOLVES = new Uint8Array(32); // what acid can eat
 DISSOLVES[E.SAND] = DISSOLVES[E.STONE] = DISSOLVES[E.PLANT] =
   DISSOLVES[E.OIL] = DISSOLVES[E.ICE] = DISSOLVES[E.LIFE] =
-  DISSOLVES[E.SUPPORT] = 1;
+  DISSOLVES[E.SUPPORT] = DISSOLVES[E.WOOD] = 1;
 // what the people can stand on / bump into
-const SOLID_P = new Uint8Array(16);
+const SOLID_P = new Uint8Array(32);
 SOLID_P[E.WALL] = SOLID_P[E.SAND] = SOLID_P[E.STONE] =
   SOLID_P[E.GLASS] = SOLID_P[E.PLANT] = SOLID_P[E.ICE] =
-  SOLID_P[E.LIFE] = SOLID_P[E.SUPPORT] = 1;
+  SOLID_P[E.LIFE] = SOLID_P[E.SUPPORT] = SOLID_P[E.WOOD] = 1;
+// FLAMMABLE: chance (in %) a neighbouring fire sets this alight. Wood is the
+// most eager to burn and carries a flame along a whole beam or up a trunk.
+const FLAMMABLE = new Uint8Array(32);
+FLAMMABLE[E.PLANT] = 10; FLAMMABLE[E.OIL] = 35; FLAMMABLE[E.SUPPORT] = 5; FLAMMABLE[E.WOOD] = 44;
 
 const NEIGHBORS4 = [[0, -1], [0, 1], [-1, 0], [1, 0]];
 const NEIGHBORS8 = [[0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]];
@@ -84,13 +89,6 @@ function updatePowder(x, y, i) {
       return;
     }
   }
-}
-
-function updateStone(x, y, i) {
-  // rigid granule: falls straight down, never piles diagonally
-  if (y + 1 >= H) return;
-  const dn = i + W, b = cells[dn];
-  if (b === E.EMPTY || IS_GAS[b] || IS_LIQUID[b]) swapCells(i, dn);
 }
 
 function updateLiquid(x, y, i, e, dispersion) {
@@ -134,9 +132,7 @@ function updateFire(x, y, i) {
       setCell(i, E.SMOKE, 15 + Math.random() * 20);
       return;
     }
-    if (t === E.PLANT && Math.random() < 0.10) setCell(j, E.FIRE, 30 + Math.random() * 30);
-    else if (t === E.OIL && Math.random() < 0.35) setCell(j, E.FIRE, 25 + Math.random() * 25);
-    else if (t === E.SUPPORT && Math.random() < 0.045) setCell(j, E.FIRE, 35 + Math.random() * 35);
+    if (FLAMMABLE[t] && Math.random() < FLAMMABLE[t] / 100) setCell(j, E.FIRE, 22 + FLAMMABLE[t] + Math.random() * 30);
     else if (t === E.ICE && Math.random() < 0.3) setCell(j, E.WATER);
     else if (t === E.LIFE) setCell(j, Math.random() < 0.5 ? E.SMOKE : E.EMPTY, 10 + Math.random() * 10);
   }
@@ -195,7 +191,7 @@ function updateLava(x, y, i) {
       return;
     }
     if (t === E.SAND && Math.random() < 0.02) setCell(j, E.GLASS);
-    else if ((t === E.PLANT || t === E.OIL || t === E.SUPPORT) && Math.random() < 0.4) setCell(j, E.FIRE, 30 + Math.random() * 30);
+    else if (FLAMMABLE[t] && Math.random() < 0.4) setCell(j, E.FIRE, 30 + Math.random() * 30);
     else if (t === E.ICE && Math.random() < 0.5) setCell(j, E.WATER);
     else if (t === E.LIFE) setCell(j, E.FIRE, 15 + Math.random() * 15);
   }
@@ -277,7 +273,6 @@ function step() {
         case E.STEAM: updateGas(x, y, i, E.STEAM); break;
         case E.PLANT: updatePlant(x, y, i); break;
         case E.LAVA: updateLava(x, y, i); break;
-        case E.STONE: updateStone(x, y, i); break;
         case E.ACID: updateAcid(x, y, i); break;
         case E.ICE: updateIce(x, y, i); break;
       }
@@ -383,13 +378,20 @@ function safeLanding(x, y) {
   return true;
 }
 
-// horizontal scan for the nearest water, returns -1 / 0 / +1
-function waterDir(x, y) {
+// Direction to the NEAREST water, -1 / 0 / +1. Measures both sides independently
+// so it never prefers left just because the left check ran first; on a genuine
+// tie it keeps the swimmer's current heading instead of snapping one way.
+function waterDir(x, y, prefer = 0) {
+  let leftD = Infinity, rightD = Infinity;
   for (let d = 1; d <= 110; d++) {
-    if (cellAt(x - d, y) === E.WATER || cellAt(x - d, y + 1) === E.WATER) return -1;
-    if (cellAt(x + d, y) === E.WATER || cellAt(x + d, y + 1) === E.WATER) return 1;
+    if (leftD === Infinity && (cellAt(x - d, y) === E.WATER || cellAt(x - d, y + 1) === E.WATER)) leftD = d;
+    if (rightD === Infinity && (cellAt(x + d, y) === E.WATER || cellAt(x + d, y + 1) === E.WATER)) rightD = d;
+    if (leftD !== Infinity && rightD !== Infinity) break;
   }
-  return 0;
+  if (leftD === Infinity && rightD === Infinity) return 0;
+  if (leftD < rightD) return -1;
+  if (rightD < leftD) return 1;
+  return prefer; // equidistant: don't bias, hold course
 }
 
 // If heat or acid is close, ordinary people put survival ahead of personality.
@@ -1037,15 +1039,22 @@ function decide(p) {
     }
 
     case "swimmer": {
-      const wet = cellAt(fx, fy) === E.WATER || cellAt(fx, fy - 1) === E.WATER;
+      // Count water at the feet, the head, OR directly below: a swimmer bobbing
+      // at the surface is still "in the water" and must use the paddle logic, not
+      // the seek-water logic. Missing that case was the old always-swims-left bug,
+      // because the seeker used to resolve ties toward the left.
+      const wet = cellAt(fx, fy) === E.WATER || cellAt(fx, fy - 1) === E.WATER || cellAt(fx, fy + 1) === E.WATER;
       if (wet) {
         if (p.t >= p.next) { p.next = p.t + 26 + Math.random() * 40; p.dir = Math.random() < 0.5 ? -1 : 1; }
-        p.desiredVx = 0.18 * p.dir;
-        // if about to leave the pool, turn back in so swimmers actually swim
+        // Steer directly (not via desiredVx): buoyancy keeps vy negative, which
+        // would otherwise suppress the desiredVx path and let the swimmer coast.
+        const targetVx = 0.2 * p.dir;
+        p.vx += Math.max(-0.04, Math.min(0.04, targetVx - p.vx));
+        // turn back before leaving the pool so swimmers actually swim laps
         const ahead = cellAt(fx + p.dir, fy) === E.WATER || cellAt(fx + p.dir, fy + 1) === E.WATER;
         if (!ahead && Math.random() < 0.6) p.dir = -p.dir;
       } else {
-        const wd = waterDir(fx, fy);
+        const wd = waterDir(fx, fy, p.dir);
         if (wd !== 0) {
           p.dir = wd; p.desiredVx = 0.28 * p.dir;
           if (p.onGround && p.blocked) p.vy = -0.9;
@@ -1361,42 +1370,43 @@ const img = worldCtx.createImageData(W, H);
 const px = img.data;
 
 const minimap = document.getElementById("minimap");
-minimap.width = 132;
-minimap.height = 88;
+minimap.width = 200;
+minimap.height = Math.round(200 * H / W);
 const minimapCtx = minimap.getContext("2d");
 minimapCtx.imageSmoothingEnabled = false;
 const viewInfo = document.getElementById("view-info");
 
-const MIN_ZOOM = Math.max(VIEW_W / W, VIEW_H / H);
-const MAX_ZOOM = 2.75;
-let cameraZoom = MIN_ZOOM;
-let cameraX = W * 0.5;
-let cameraY = H * 0.55;
+// Fixed 1:1 camera window, no zoom. The visible slice of the world is blitted
+// at native size (source size === destination size), so no pixel is ever merged
+// or dropped — the whole point, since Game of Life needs every cell. The window
+// pans horizontally across the wide world; height matches the world exactly.
+let cameraX = VIEW_W * 0.5;
+let cameraY = H * 0.5;
 
 function clampCamera() {
-  const viewW = Math.min(W, VIEW_W / cameraZoom);
-  const viewH = Math.min(H, VIEW_H / cameraZoom);
-  cameraX = Math.max(viewW * 0.5, Math.min(W - viewW * 0.5, cameraX));
-  cameraY = Math.max(viewH * 0.5, Math.min(H - viewH * 0.5, cameraY));
+  cameraX = Math.max(VIEW_W * 0.5, Math.min(W - VIEW_W * 0.5, cameraX));
+  cameraY = Math.max(VIEW_H * 0.5, Math.min(H - VIEW_H * 0.5, cameraY));
 }
 
-function cameraRect() {
+function viewRect() {
   clampCamera();
-  const width = Math.min(W, VIEW_W / cameraZoom);
-  const height = Math.min(H, VIEW_H / cameraZoom);
-  return { x: cameraX - width * 0.5, y: cameraY - height * 0.5, width, height };
+  const x = Math.max(0, Math.min(W - VIEW_W, Math.round(cameraX - VIEW_W * 0.5)));
+  const y = Math.max(0, Math.min(H - VIEW_H, Math.round(cameraY - VIEW_H * 0.5)));
+  return { x, y, cols: VIEW_W, rows: VIEW_H };
 }
 
+const REGIONS = [
+  [150, "the village"], [320, "the climbs"], [470, "the updraft"],
+  [630, "frostmere"], [830, "the life gardens"], [W, "the meadow"],
+];
 function updateViewInfo() {
-  viewInfo.textContent = `${Math.round(cameraZoom * 100)}% view`;
+  const cx = cameraX;
+  let name = REGIONS[REGIONS.length - 1][1];
+  for (const [edge, label] of REGIONS) { if (cx < edge) { name = label; break; } }
+  viewInfo.textContent = name;
 }
 
-function resetCamera() {
-  cameraZoom = MIN_ZOOM;
-  cameraX = W * 0.5;
-  cameraY = H * 0.5;
-  updateViewInfo();
-}
+function resetCamera() { cameraX = VIEW_W * 0.5; cameraY = H * 0.5; updateViewInfo(); }
 
 function renderMinimap(view) {
   minimapCtx.clearRect(0, 0, minimap.width, minimap.height);
@@ -1406,8 +1416,8 @@ function renderMinimap(view) {
   minimapCtx.strokeRect(
     view.x / W * minimap.width + 0.5,
     view.y / H * minimap.height + 0.5,
-    Math.max(1, view.width / W * minimap.width - 1),
-    Math.max(1, view.height / H * minimap.height - 1),
+    Math.max(1, view.cols / W * minimap.width - 1),
+    Math.max(1, view.rows / H * minimap.height - 1),
   );
 }
 
@@ -1423,7 +1433,8 @@ COLORS[E.STONE] = [138, 141, 148, 16];
 COLORS[E.ACID] = [128, 222, 42, 24];
 COLORS[E.ICE] = [168, 216, 240, 14];
 COLORS[E.GLASS] = [172, 202, 208, 8];
-COLORS[E.SUPPORT] = [154, 104, 52, 22];
+COLORS[E.SUPPORT] = [150, 118, 84, 20];   // packed earth / scaffolding
+COLORS[E.WOOD] = [128, 84, 44, 24];       // timber: warm, grainy brown
 
 function putPx(x, y, r, g, b) {
   if (x < 0 || x >= W || y < 0 || y >= H) return;
@@ -1555,10 +1566,13 @@ function render() {
   drawPeople();
   drawDeaths();
   worldCtx.putImageData(img, 0, 0);
-  const view = cameraRect();
+  const view = viewRect();
   ctx.clearRect(0, 0, VIEW_W, VIEW_H);
-  ctx.drawImage(worldBuffer, view.x, view.y, view.width, view.height, 0, 0, VIEW_W, VIEW_H);
+  // 1:1 blit of the visible slice — source and destination are the same size,
+  // so no pixel is ever merged or dropped. CSS upscales the canvas crisply.
+  ctx.drawImage(worldBuffer, view.x, view.y, VIEW_W, VIEW_H, 0, 0, VIEW_W, VIEW_H);
   renderMinimap(view);
+  updateViewInfo();
 }
 
 // ---------- painting ----------
@@ -1578,7 +1592,7 @@ function stampBrush(cx, cy, elem) {
       const t = cells[i];
       if (elem === ERASER) {
         if (t !== E.EMPTY) setCell(i, E.EMPTY);
-      } else if (elem === E.WALL || elem === E.PLANT || elem === E.ICE || elem === E.STONE) {
+      } else if (elem === E.WALL || elem === E.PLANT || elem === E.ICE || elem === E.STONE || elem === E.WOOD) {
         if (t !== elem) setCell(i, elem);
       } else if (elem === E.LIFE) {
         if (t === E.EMPTY) setCell(i, E.LIFE); // seed into open air only
@@ -1608,20 +1622,19 @@ let peopleAccum = 0;       // distance accumulator, so a drag spreads people out
 
 function canvasCoords(ev) {
   const rect = canvas.getBoundingClientRect();
-  const view = cameraRect();
+  const view = viewRect();
   return [
-    Math.max(0, Math.min(W - 1, Math.floor(view.x + (ev.clientX - rect.left) / rect.width * view.width))),
-    Math.max(0, Math.min(H - 1, Math.floor(view.y + (ev.clientY - rect.top) / rect.height * view.height))),
+    Math.max(0, Math.min(W - 1, Math.floor(view.x + (ev.clientX - rect.left) / rect.width * view.cols))),
+    Math.max(0, Math.min(H - 1, Math.floor(view.y + (ev.clientY - rect.top) / rect.height * view.rows))),
   ];
 }
 
 function panByScreen(deltaX, deltaY) {
   const rect = canvas.getBoundingClientRect();
-  const view = cameraRect();
-  cameraX -= deltaX / rect.width * view.width;
-  cameraY -= deltaY / rect.height * view.height;
+  const view = viewRect();
+  cameraX -= deltaX / rect.width * view.cols;
+  cameraY -= deltaY / rect.height * view.rows;
   clampCamera();
-  updateViewInfo();
 }
 
 // drop a preset centered on (cx, cy), into empty air only so terrain survives
@@ -1687,22 +1700,13 @@ const endStroke = () => {
 canvas.addEventListener("pointerup", endStroke);
 canvas.addEventListener("pointercancel", endStroke);
 canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
+// The wheel scrolls the world sideways (no zoom). A vertical wheel maps to
+// horizontal travel, which is what a wide side-view wants.
 canvas.addEventListener("wheel", (ev) => {
   ev.preventDefault();
-  const rect = canvas.getBoundingClientRect();
-  const oldView = cameraRect();
-  const fx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
-  const fy = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
-  const anchorX = oldView.x + oldView.width * fx;
-  const anchorY = oldView.y + oldView.height * fy;
-  const multiplier = ev.deltaY < 0 ? 1.16 : 1 / 1.16;
-  cameraZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cameraZoom * multiplier));
-  const newW = Math.min(W, VIEW_W / cameraZoom);
-  const newH = Math.min(H, VIEW_H / cameraZoom);
-  cameraX = anchorX + (0.5 - fx) * newW;
-  cameraY = anchorY + (0.5 - fy) * newH;
+  const amount = (ev.deltaX || ev.deltaY);
+  cameraX += Math.sign(amount) * 26;
   clampCamera();
-  updateViewInfo();
 }, { passive: false });
 
 // ---------- palette + anchored popover menus ----------
@@ -1718,6 +1722,7 @@ const PALETTE = [
   { e: E.STONE, label: "stone", key: "8" },
   { e: E.ACID, label: "acid", key: "9" },
   { e: E.ICE, label: "ice", key: "0" },
+  { e: E.WOOD, label: "wood", key: "o" },
   { e: E.LIFE, label: "life", key: "g", menu: "life" },
   { e: PEOPLE, label: "people", key: "p", menu: "people" },
   { e: ERASER, label: "erase", key: "e" },
@@ -1727,8 +1732,8 @@ const SWATCH = {
   [E.SAND]: "#e0b060", [E.WATER]: "#2a6cd4", [E.WALL]: "#5a5f6a",
   [E.PLANT]: "#3ea04e", [E.FIRE]: "#ff8c28", [E.OIL]: "#684e30",
   [E.LAVA]: "#e04a12", [E.STONE]: "#8a8d94", [E.ACID]: "#80de2a",
-  [E.ICE]: "#a8d8f0", [E.LIFE]: "#7cffd8", [PEOPLE]: "#cfd6e2",
-  [ERASER]: "#05060a",
+  [E.ICE]: "#a8d8f0", [E.WOOD]: "#8a5a2e", [E.LIFE]: "#7cffd8",
+  [PEOPLE]: "#cfd6e2", [ERASER]: "#05060a",
 };
 
 const paletteEl = document.getElementById("palette");
@@ -1839,8 +1844,32 @@ function clearWorld() {
   deaths.length = 0;
 }
 
+// WASD scrolls the camera around the map. Held state is polled in the loop so
+// motion is smooth and can combine (e.g. up-left) rather than stuttering.
+const panKeys = { w: false, a: false, s: false, d: false };
+
+function panCamera() {
+  const speed = 5;
+  let dx = 0, dy = 0;
+  if (panKeys.a) dx -= 1;
+  if (panKeys.d) dx += 1;
+  if (panKeys.w) dy -= 1;
+  if (panKeys.s) dy += 1;
+  if (dx === 0 && dy === 0) return;
+  if (dx && dy) { dx *= 0.7071; dy *= 0.7071; } // normalize diagonals
+  cameraX += dx * speed;
+  cameraY += dy * speed;
+  clampCamera();
+}
+
 document.addEventListener("keydown", (ev) => {
   if (ev.target instanceof HTMLInputElement) return;
+  const k = ev.key.toLowerCase();
+  if (k === "w" || k === "a" || k === "s" || k === "d") {
+    if (!ev.repeat) panKeys[k] = true;
+    ev.preventDefault();
+    return;
+  }
   if (ev.key === " ") { ev.preventDefault(); setPaused(!paused); return; }
   if (ev.key === ".") { step(); return; }
   if (ev.key === "f" || ev.key === "F") { resetCamera(); return; }
@@ -1848,9 +1877,16 @@ document.addEventListener("keydown", (ev) => {
   if (ev.key === "[") { brushSlider.value = String(Math.max(1, brushRadius - 1)); brushSlider.dispatchEvent(new Event("input")); return; }
   if (ev.key === "]") { brushSlider.value = String(Math.min(16, brushRadius + 1)); brushSlider.dispatchEvent(new Event("input")); return; }
   if (ev.key === "Escape") { closeMenu(); return; }
-  const entry = PALETTE.find((p) => p.key === ev.key.toLowerCase());
+  const entry = PALETTE.find((p) => p.key === k);
   if (entry) selectElement(entry.e);
 });
+
+document.addEventListener("keyup", (ev) => {
+  const k = ev.key.toLowerCase();
+  if (k === "w" || k === "a" || k === "s" || k === "d") panKeys[k] = false;
+});
+// dropping focus (tab-out, popover) must not leave a key stuck "held"
+window.addEventListener("blur", () => { panKeys.w = panKeys.a = panKeys.s = panKeys.d = false; });
 
 // ---------- opening scene ----------
 
@@ -1946,105 +1982,206 @@ subLabels.get(PEOPLE).textContent = PTYPES[peopleType].label;
 
 selectElement(E.SAND);
 
-function seedWorld() {
-  // A fixed seam of bedrock lets the opening regions evolve without draining
-  // off the bottom of the map. Each section is deliberately a little
-  // self-contained: players can explore it, then connect or rupture it.
-  fillRect(0, H - 7, W - 1, H - 1, E.WALL);
+// ---- terrain-painting helpers ----
 
-  // WEST: Sunstone dunes, a generous loose-material source for builders.
-  for (let x = 0; x < 118; x++) {
-    const h = 34 + Math.sin(x * 0.058) * 18 + Math.sin(x * 0.15 + 1.6) * 8;
-    fillRect(x, H - 8 - Math.round(h), x, H - 8, E.SAND);
+function fillCol(x, y0, y1, e, prob = 1) {
+  if (x < 0 || x >= W) return;
+  for (let y = y0; y <= y1; y++) {
+    if (y < 0 || y >= H) continue;
+    if (prob === 1 || Math.random() < prob) setCell(idx(x, y), e);
   }
-  fillRect(4, 279, 8, H - 8, E.WALL);
-  fillRect(112, 267, 116, H - 8, E.WALL);
-  fillRect(86, 244, 110, 250, E.STONE, 0.72);
+}
 
-  // NORTHWEST: Frost Shelf — an iced-over meltwater basin and a slippery ridge.
-  fillRect(10, 150, 108, 154, E.WALL);
-  fillRect(18, 140, 101, 149, E.ICE, 0.86);
-  fillRect(18, 178, 22, 220, E.WALL);
-  fillRect(101, 178, 105, 220, E.WALL);
-  fillRect(22, 216, 101, 220, E.WALL);
-  fillRect(23, 192, 100, 215, E.WATER);
-  fillRect(29, 185, 84, 191, E.ICE, 0.82);
-  fillRect(47, 162, 76, 165, E.WALL);
+function blob(cx, cy, rx, ry, e, prob = 1) {
+  for (let y = -ry; y <= ry; y++) {
+    for (let x = -rx; x <= rx; x++) {
+      if ((x * x) / (rx * rx || 1) + (y * y) / (ry * ry || 1) > 1) continue;
+      const gx = cx + x, gy = cy + y;
+      if (gx < 0 || gx >= W || gy < 0 || gy >= H) continue;
+      if (prob === 1 || Math.random() < prob) setCell(idx(gx, gy), e);
+    }
+  }
+}
 
-  // SOUTH-CENTRE: Verdant terraces with a little irrigation cut through them.
-  fillRect(120, 277, 257, 281, E.WALL);
-  fillRect(132, 249, 242, 253, E.WALL);
-  fillRect(151, 222, 225, 226, E.WALL);
-  fillRect(122, 252, 241, 276, E.PLANT, 0.30);
-  fillRect(144, 226, 224, 248, E.PLANT, 0.23);
-  fillRect(132, 251, 137, 276, E.WALL);
-  fillRect(236, 251, 241, 276, E.WALL);
-  fillRect(163, 235, 169, 248, E.WATER);
-  fillRect(170, 244, 219, 248, E.WATER);
-  fillRect(119, 276, 123, H - 8, E.WALL);
-  fillRect(254, 276, 258, H - 8, E.WALL);
+// Carve air only through the solid rock/dirt, so caves never eat bedrock,
+// liquids or open sky.
+function digBlob(cx, cy, r) {
+  for (let y = -r; y <= r; y++) {
+    for (let x = -r; x <= r; x++) {
+      if (x * x + y * y > r * r) continue;
+      const gx = cx + x, gy = cy + y;
+      if (gx < 1 || gx >= W - 1 || gy < 2 || gy >= H - 8) continue;
+      const c = cells[idx(gx, gy)];
+      if (c === E.WALL || c === E.SUPPORT || c === E.STONE) setCell(idx(gx, gy), E.EMPTY);
+    }
+  }
+}
 
-  // CENTRE: Skyworks — overlapping platforms, a life observatory, and routes
-  // with several viable landings for platformers and flyers.
-  fillRect(132, 205, 170, 208, E.WALL);
-  fillRect(172, 177, 218, 180, E.WALL);
-  fillRect(222, 151, 262, 154, E.WALL);
-  fillRect(273, 178, 307, 181, E.WALL);
-  fillRect(244, 204, 286, 207, E.WALL);
-  fillRect(188, 128, 225, 131, E.WALL);
-  fillRect(237, 104, 270, 107, E.WALL);
-  fillRect(153, 157, 158, 204, E.WALL);
-  fillRect(291, 153, 296, 204, E.WALL);
-  fillRect(182, 183, 206, 185, E.SUPPORT);
-  fillRect(246, 209, 274, 211, E.SUPPORT);
-  placePattern(202, 20, GLIDER_GUN, E.LIFE);
-  placePattern(232, 116, PRESETS.beacon.cells, E.LIFE);
-  placePattern(279, 164, PRESETS.glider.cells, E.LIFE);
+// A little pixel tree: wooden trunk, leafy canopy.
+function tree(x, groundY, trunkH) {
+  for (let y = 1; y <= trunkH; y++) {
+    const gy = groundY - y;
+    if (gy > 3) setCell(idx(x, gy), E.WOOD);
+  }
+  blob(x, groundY - trunkH - 2, 4, 3, E.PLANT, 0.9);
+  blob(x, groundY - trunkH - 4, 3, 2, E.PLANT, 0.7);
+}
 
-  // NORTHEAST: Ember Foundry. Its floor is intentionally pierceable from
-  // below, so it can become a lavafall into the rift if someone opens it.
-  fillRect(324, 91, 429, 95, E.WALL);
-  fillRect(321, 58, 326, 94, E.WALL);
-  fillRect(427, 58, 432, 94, E.WALL);
-  fillRect(326, 73, 426, 90, E.LAVA);
-  fillRect(338, 65, 412, 70, E.SAND, 0.72);
-  fillRect(355, 52, 390, 55, E.WALL);
-  fillRect(360, 47, 386, 51, E.STONE, 0.70);
+// A timber hut: wood walls and a pitched roof over a stone footing, with a
+// doorway punched in the front so villagers can wander in and out.
+function hut(x, groundY, w, h) {
+  const left = x, right = x + w, top = groundY - h;
+  for (let yy = top; yy <= groundY - 1; yy++) {
+    setCell(idx(left, yy), E.WOOD);
+    setCell(idx(right, yy), E.WOOD);
+  }
+  for (let xx = left; xx <= right; xx++) setCell(idx(xx, groundY - 1), E.WOOD); // floor beam
+  for (let r = 0; r <= (w >> 1); r++) {                                          // pitched roof
+    const ry = top - r;
+    if (ry < 3) break;
+    setCell(idx(left + r, ry), E.WOOD);
+    setCell(idx(right - r, ry), E.WOOD);
+    if (left + r >= right - r) { for (let xx = left + r; xx <= right - r; xx++) setCell(idx(xx, ry), E.WOOD); }
+  }
+  // hollow interior + a doorway on the ground
+  for (let yy = top + 1; yy <= groundY - 2; yy++) for (let xx = left + 1; xx <= right - 1; xx++) setCell(idx(xx, yy), E.EMPTY);
+  const door = left + 1 + ((w - 2) >> 1);
+  setCell(idx(door, groundY - 1), E.EMPTY);
+  setCell(idx(door, groundY - 2), E.EMPTY);
+  setCell(idx(door - 1, groundY - 1), E.EMPTY);
+}
 
-  // SOUTHEAST: Blue Rift, a broad water-and-oil lake with a garden island.
-  fillRect(263, 241, 268, H - 8, E.WALL);
-  fillRect(398, 241, 403, H - 8, E.WALL);
-  fillRect(267, 309, 399, H - 8, E.WALL);
-  fillRect(269, 263, 397, 308, E.WATER);
-  fillRect(279, 256, 348, 262, E.OIL, 0.90);
-  fillRect(326, 283, 352, 308, E.WALL);
-  fillRect(329, 277, 349, 282, E.SAND);
-  fillRect(334, 272, 346, 276, E.PLANT, 0.44);
-  fillRect(273, 247, 321, 250, E.WALL);
-  fillRect(370, 247, 394, 250, E.WALL);
+function surfaceYAt(x) {
+  for (let y = 0; y < H; y++) {
+    const c = cells[idx(x, y)];
+    if (SOLID_P[c] || IS_LIQUID[c]) return y;
+  }
+  return H - 8;
+}
 
-  // FAR EAST: a glass-lined acid cavern beneath a rough stone overhang.
-  fillRect(411, 228, 416, H - 8, E.WALL);
-  fillRect(475, 228, 479, H - 8, E.WALL);
-  fillRect(415, 292, 475, 297, E.GLASS);
-  fillRect(421, 255, 469, 291, E.ACID);
-  fillRect(421, 247, 469, 252, E.GLASS);
-  fillRect(433, 205, 472, 211, E.STONE, 0.78);
-  fillRect(445, 216, 470, 220, E.WALL);
-  fillRect(419, 270, 424, 290, E.GLASS);
+function spawnOn(x, type) {
+  x = Math.max(2, Math.min(W - 3, x | 0));
+  spawnPerson(x, Math.max(5, surfaceYAt(x) - 3), type);
+}
 
-  // A population spread through the regions makes the opening world readable
-  // immediately, while still leaving abundant open space for experiments.
-  for (let n = 0; n < 7; n++) spawnPerson(16 + n * 13, 228, "wanderer");
-  spawnPerson(92, 225, "digger");
-  spawnPerson(144, 245, "adventurer");
-  spawnPerson(188, 174, "platformer");
-  spawnPerson(238, 148, "platformer");
-  spawnPerson(277, 173, "daredevil");
-  spawnPerson(283, 258, "swimmer");
-  spawnPerson(338, 270, "wanderer");
-  spawnPerson(383, 244, "platformer");
-  spawnPerson(441, 224, "adventurer");
+// ============================================================
+// The world — a wide side-scroller you pan through, laid out as
+// a run of themed regions: a village, a platforming climb, an
+// open flying updraft, a frozen lake, a Game of Life garden, and
+// a meadow. Ground is stone and sand (wall only where built),
+// carved by caves, with people living in every stretch.
+// ============================================================
+
+const BEDROCK = H - 4;
+
+function baseHeight(x) {
+  return 132 + Math.sin(x * 0.012) * 10 + Math.sin(x * 0.037 + 1.1) * 6 + Math.sin(x * 0.09 + 2.2) * 3;
+}
+
+function platform(x0, x1, y, e = E.STONE) {
+  for (let x = x0; x <= x1; x++) if (x >= 0 && x < W && y >= 0 && y < H) setCell(idx(x, y), e);
+}
+
+function seedWorld() {
+  const surf = new Array(W);
+  fillRect(0, BEDROCK, W - 1, H - 1, E.WALL); // bedrock seam
+
+  // ---- Pass A: a stone crust; sink a lake basin, drop a flying chasm ----
+  for (let x = 0; x < W; x++) {
+    let h = baseHeight(x);
+    if (x >= 498 && x <= 602) { const t = Math.min(1, Math.min(x - 498, 602 - x) / 30); h += t * 34; }  // lake
+    if (x >= 330 && x <= 460) { const t = Math.min(1, Math.min(x - 330, 460 - x) / 42); h += t * 46; }  // chasm
+    const top = Math.max(58, Math.min(BEDROCK - 3, Math.round(h)));
+    surf[x] = top;
+    fillCol(x, top, BEDROCK - 1, E.STONE);
+  }
+
+  // ---- Pass B: caves worming through the stone ----
+  for (let n = 0; n < 30; n++) {
+    let x = 14 + Math.random() * (W - 28);
+    let y = surf[Math.round(x)] + 10 + Math.random() * 40;
+    let ang = Math.random() * Math.PI * 2;
+    const len = 40 + Math.random() * 80, r = 2 + Math.random() * 2;
+    for (let s = 0; s < len; s++) {
+      ang += (Math.random() - 0.5) * 0.55;
+      x += Math.cos(ang); y += Math.sin(ang) * 0.7;
+      if (x < 6 || x >= W - 6 || y < surf[Math.round(x)] + 6 || y >= H - 5) break;
+      digBlob(Math.round(x), Math.round(y), r);
+    }
+  }
+
+  // ---- THE VILLAGE (0-150): grass, huts, a well, trees ----
+  for (let x = 0; x < 150; x++) {
+    setCell(idx(x, surf[x]), E.PLANT);
+    if (Math.random() < 0.4) setCell(idx(x, surf[x] - 1), E.PLANT);
+  }
+  hut(14, surf[20], 13, 9);
+  hut(52, surf[59], 15, 11);
+  hut(98, surf[104], 12, 8);
+  hut(126, surf[132], 13, 9);
+  const wx = 82;                              // village well
+  for (let y = surf[wx] - 1; y < surf[wx] + 11; y++) { setCell(idx(wx - 2, y), E.WALL); setCell(idx(wx + 2, y), E.WALL); }
+  fillRect(wx - 1, surf[wx] + 2, wx + 1, surf[wx] + 10, E.WATER);
+  setCell(idx(wx, surf[wx] - 3), E.WOOD);
+  tree(38, surf[38], 6); tree(140, surf[140], 7);
+
+  // ---- THE CLIMBS (150-320): staggered ledges to hop up (platformers) ----
+  const climbHeights = [150, 138, 126, 114, 102, 90, 78, 66];
+  for (let i = 0; i < climbHeights.length; i++) {
+    const y = climbHeights[i];
+    for (let seg = 0; seg < 3; seg++) {
+      const x0 = 158 + seg * 54 + (i % 2) * 26;
+      platform(x0, x0 + 12 + (i % 3) * 4, y, i > 5 ? E.WOOD : E.STONE);
+    }
+  }
+  platform(232, 250, 54, E.WOOD); // a lookout at the top of the climb
+
+  // ---- THE UPDRAFT (320-470): a deep chasm, pillars, floating perches ----
+  const perches = [[334, 96], [360, 72], [392, 84], [352, 50], [408, 58], [436, 90], [420, 40], [376, 34]];
+  for (const [px] of [[344], [378], [410], [440]]) fillCol(px, 92 + (px % 3) * 4, BEDROCK - 1, E.STONE); // pillars
+  for (const [x, y] of perches) platform(x, x + 9, y, E.STONE);
+
+  // ---- FROSTMERE (470-630): a frozen lake, snow, drifting bergs (swimmers) ----
+  for (let x = 470; x < 630; x++) {
+    setCell(idx(x, surf[x]), E.ICE);
+    if (Math.random() < 0.5) setCell(idx(x, surf[x] - 1), E.ICE);
+  }
+  const sea = surf[498];
+  for (let x = 498; x <= 602; x++) {
+    if (surf[x] > sea) { fillCol(x, sea + 1, surf[x] - 1, E.WATER); setCell(idx(x, sea), E.ICE); } // ice cap on the lake
+  }
+  for (let x = 490; x < 498; x++) fillCol(x, surf[x] - 1, surf[x] + 2, E.SAND); // beach
+  for (let x = 602; x < 612; x++) fillCol(x, surf[x] - 1, surf[x] + 2, E.SAND);
+  blob(536, sea + 6, 4, 2, E.ICE); blob(572, sea + 5, 3, 2, E.ICE); // bergs
+
+  // ---- THE LIFE GARDENS (630-830): open sky full of Game of Life builds ----
+  for (let x = 630; x < 830; x++) setCell(idx(x, surf[x]), E.PLANT);
+  platform(688, 716, 128, E.STONE); // a viewing terrace
+  placePattern(648, 16, GLIDER_GUN, E.LIFE);        // two guns crossing fire
+  placePattern(770, 20, GLIDER_GUN, E.LIFE);
+  placePattern(700, 58, PRESETS.pulsar.cells, E.LIFE);
+  placePattern(660, 96, PRESETS.pentadecathlon.cells, E.LIFE);
+  placePattern(806, 52, PRESETS.lwss.cells, E.LIFE);
+  placePattern(744, 104, PRESETS.beacon.cells, E.LIFE);
+  placePattern(820, 92, PRESETS.acorn.cells, E.LIFE);
+
+  // ---- THE MEADOW (830-900): grass, trees, a little dune ----
+  for (let x = 830; x < W; x++) {
+    setCell(idx(x, surf[x]), E.PLANT);
+    if (Math.random() < 0.4) setCell(idx(x, surf[x] - 1), E.PLANT);
+  }
+  tree(848, surf[848], 6); tree(878, surf[878], 7);
+  for (let x = 860; x < 878; x++) fillCol(x, surf[x] - 3, surf[x], E.SAND);
+
+  // ---- people, living in every region ----
+  for (let x = 10; x < 148; x += 12) spawnOn(x, Math.random() < 0.5 ? "wanderer" : "adventurer"); // villagers
+  for (let x = 160; x < 316; x += 12) spawnOn(x, "platformer");                                   // the climbs
+  for (const [x, y] of perches) spawnPerson(x + 4, y - 2, "daredevil");                            // the updraft
+  spawnOn(360, "daredevil"); spawnOn(430, "daredevil");
+  spawnOn(516, "swimmer"); spawnOn(542, "swimmer"); spawnOn(566, "swimmer"); spawnOn(588, "swimmer"); spawnOn(500, "wanderer");
+  for (let x = 640; x < 824; x += 22) spawnOn(x, Math.random() < 0.5 ? "wanderer" : "adventurer"); // life gardens
+  for (let x = 834; x < 896; x += 12) spawnOn(x, Math.random() < 0.5 ? "adventurer" : "wanderer"); // meadow
+  spawnOn(196, "digger"); spawnOn(286, "digger"); spawnOn(120, "digger");                          // a few miners
 }
 
 seedWorld();
@@ -2091,13 +2228,76 @@ const logoTargets = [];
     cursor += L_GW * L_BLOCK + L_GAP;
   }
   var LW = cursor - L_GAP;
-  var LH = L_PAD * 2 + L_GH * L_BLOCK;
+  var LH = L_PAD + L_GH * L_BLOCK + 20; // extra room below the word for a little stage
 }
 logoCanvas.width = LW;
 logoCanvas.height = LH;
 const logoCtx = logoCanvas.getContext("2d");
 const logoImg = logoCtx.createImageData(LW, LH);
 const logoPx = logoImg.data;
+
+// A tiny cast: one of every kind of person, each doing their thing on a ground
+// strip beneath the word, with the occasional glider drifting past overhead.
+// The people and the Life are the heart of the game, so the logo shows them off.
+const LOGO_GROUND = LH - 3;
+const logoActors = [
+  { type: "wanderer", x: 14 }, { type: "adventurer", x: 42 }, { type: "platformer", x: 70 },
+  { type: "daredevil", x: 104 }, { type: "digger", x: 134 }, { type: "swimmer", x: 164 },
+];
+let logoGlider = null;
+
+function logoPut(x, y, r, g, b) {
+  x |= 0; y |= 0;
+  if (x < 0 || x >= LW || y < 0 || y >= LH) return;
+  const p = (y * LW + x) * 4;
+  logoPx[p] = r < 0 ? 0 : r > 255 ? 255 : r;
+  logoPx[p + 1] = g < 0 ? 0 : g > 255 ? 255 : g;
+  logoPx[p + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
+  logoPx[p + 3] = 255;
+}
+
+const LOGO_GLIDER = [[1, 0], [2, 1], [0, 2], [1, 2], [2, 2]];
+
+function drawLogoLife() {
+  const gy = LOGO_GROUND, f = logoFrame;
+  for (let x = 10; x < LW - 10; x++) logoPut(x, gy + 1, 38, 42, 52); // ground line
+
+  for (const a of logoActors) {
+    const c = PTYPES[a.type].color;
+    let x = a.x, y = gy, arms = false, sub = null;
+    if (a.type === "wanderer") {
+      if ((f % 96) < 12) y -= 2;                                   // occasional hop in place
+    } else if (a.type === "adventurer") {
+      x += Math.round(Math.sin(f * 0.045) * 6);                    // strolls back and forth
+    } else if (a.type === "platformer") {
+      logoPut(a.x + 5, gy, 122, 126, 138); logoPut(a.x + 6, gy, 122, 126, 138); // a step
+      logoPut(a.x + 5, gy - 1, 122, 126, 138);
+      const ph = f % 70;
+      if (ph < 22) { y -= Math.round(Math.sin(ph / 22 * Math.PI) * 5); x += Math.round(ph / 22 * 5); }
+      else { x += 5; y -= 2; }                                     // landed on the step
+    } else if (a.type === "daredevil") {
+      x += Math.round(Math.cos(f * 0.05) * 6);
+      y = gy - 5 - Math.round((Math.sin(f * 0.05) * 0.5 + 0.5) * 10); // loops through the air
+      arms = true;
+    } else if (a.type === "digger") {
+      const ph = f % 40;
+      y = gy + (ph < 20 ? Math.round(ph / 20 * 2) : Math.round((40 - ph) / 20 * 2)); // bobs into the dirt
+      logoPut(a.x, gy + 2, 150, 118, 84); logoPut(a.x + (f & 1 ? 1 : -1), gy, 150, 118, 84); // kicked earth
+    } else if (a.type === "swimmer") {
+      for (let dx = -4; dx <= 4; dx++) { logoPut(a.x + dx, gy, 42, 108, 212); logoPut(a.x + dx, gy - 1, 42, 108, 212); }
+      y = gy - 1 + Math.round(Math.sin(f * 0.11));                 // bobs in a little pool
+    }
+    logoPut(x, y - 2, 240, 202, 164);              // head
+    logoPut(x, y - 1, c[0], c[1], c[2]);           // torso
+    logoPut(x, y, c[0] * 0.55, c[1] * 0.55, c[2] * 0.55); // legs
+    if (arms) { logoPut(x - 1, y - 1, c[0] * 0.8, c[1] * 0.8, c[2] * 0.8); logoPut(x + 1, y - 1, c[0] * 0.8, c[1] * 0.8, c[2] * 0.8); }
+    else if (Math.abs(x - a.x) > 0.5 && y >= gy - 1) { logoPut(x + (f >> 2 & 1 ? 1 : -1), gy, c[0] * 0.55, c[1] * 0.55, c[2] * 0.55); }
+  }
+
+  if (logoGlider) {
+    for (const [dx, dy] of LOGO_GLIDER) logoPut(logoGlider.x + dx, logoGlider.y + dy, 124, 255, 216);
+  }
+}
 
 function resetLogoAssembly() {
   for (const t of logoTargets) {
@@ -2137,6 +2337,14 @@ function stepLogo() {
     }
     if (gone) { resetLogoAssembly(); logoPhase = "assemble"; logoPhaseT = 0; }
   }
+
+  // a glider ambles across the sky above the word every so often
+  if (logoGlider) {
+    if ((logoFrame & 3) === 0) { logoGlider.x++; if ((logoFrame % 20) === 0) logoGlider.y++; }
+    if (logoGlider.x > LW + 2) logoGlider = null;
+  } else if (Math.random() < 0.006) {
+    logoGlider = { x: -3, y: 1 + (Math.random() * 5 | 0) };
+  }
 }
 
 function logoColor(mat, s, f) {
@@ -2166,6 +2374,7 @@ function renderLogo() {
     logoPx[p + 2] = c[2] < 0 ? 0 : c[2] > 255 ? 255 : c[2];
     logoPx[p + 3] = 255;
   }
+  drawLogoLife();
   logoCtx.putImageData(logoImg, 0, 0);
 }
 
@@ -2177,6 +2386,7 @@ let fpsFrames = 0, fpsLast = performance.now();
 
 function tick() {
   if (!paused) step();
+  panCamera();
   render();
   stepLogo();
   renderLogo();

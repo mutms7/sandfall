@@ -264,7 +264,7 @@ input[type="range"] {
 canvas#world {
   display: block;
   width: 100%;
-  aspect-ratio: 3 / 2;
+  aspect-ratio: 9 / 4;
   background: #05060a;
   border: 1px solid var(--panel-edge);
   border-radius: var(--radius);
@@ -278,8 +278,8 @@ canvas#world {
   position: absolute;
   right: 12px;
   bottom: 12px;
-  width: 132px;
-  height: 88px;
+  width: 200px;
+  height: 46px;
   background: #05060a;
   border: 1px solid rgba(223, 228, 236, 0.35);
   border-radius: 7px;

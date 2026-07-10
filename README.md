@@ -1,6 +1,6 @@
 # Sandfall
 
-A tiny falling-sand alchemy sandbox in a single canvas. No framework, no build step, just HTML/CSS/JS. Paint elements onto a 480x320 world, drop in a few little people, and watch it all interact via simple local rules. The screen starts as a full-world overview, then you can zoom into any region without giving up the crisp 3:2 pixel view.
+A tiny falling-sand alchemy sandbox in a single canvas. No framework, no build step, just HTML/CSS/JS. Paint elements onto a wide 900x200 world, drop in little people, and watch it all interact via simple local rules. The world is a side-scrolling strip of regions, a village, a platforming climb, an open flying updraft, a frozen lake, a Game of Life garden, and a meadow, that you roam through with WASD (every pixel drawn at full size, no zoom, so Game of Life stays crisp).
 
 The title up top isn't an image, it's a second little sim: each letter of **SANDFALL** is drawn out of a different ingredient (sand, water, plant, lava, fire, acid, ice, and life), rained into place, held, then collapsed and rebuilt on a loop.
 
@@ -27,9 +27,10 @@ python -m http.server 8123 -d .
 | **fire** | Flickers upward, short-lived. Spreads to oil and plants, melts ice, dies against water. Leaves smoke. |
 | **oil** | Floats on water, spreads slowly. Burns enthusiastically. |
 | **lava** | Viscous, glowing, spits sparks. Ignites what it touches, melts ice, turns sand to glass. Cools into stone on contact with water. |
-| **stone** | Falls straight down like rubble. Dissolvable by acid, otherwise inert. |
-| **acid** | Eats sand, stone, plants, oil, and ice. Water dilutes it. Walls and glass resist it. |
+| **stone** | Solid natural rock. Static, so it forms stable cliffs, caves, and platforms. Dissolvable by acid; lava cooling in water leaves it behind. |
+| **acid** | Eats sand, stone, plants, oil, wood, and ice. Water dilutes it. Walls and glass resist it. |
 | **ice** | Static. Slowly freezes neighboring water, melts near fire and lava. |
+| **wood** | A placeable building material: static, solid to stand on, and the stuff trees and village huts are made of. The most flammable thing in the world, fire races along a beam and up a trunk. Acid dissolves it. |
 | **life** | Floats in place and evolves by [Conway's Game of Life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life). Births need empty air, so terrain, water and sand are walls that gliders shatter against. Fragile: fire, lava and acid destroy it. New cells glow bright cyan, aging to deep teal. |
 | tunnel supports | Diggers leave wooden roof and floor bracing behind them. It stops loose sand and stone from collapsing into a tunnel, but fire and acid can destroy it. |
 | smoke / steam / glass | Byproducts. Smoke dissipates, steam rises and sometimes condenses back into rain, glass is what lava leaves behind in sand. |
@@ -58,8 +59,8 @@ Pick a kind from the menu, then **click or drag** on the canvas to drop people (
 ## Controls
 
 - **Left-drag** paints the selected element or drops people, **right-drag** erases
-- **Wheel** zooms toward the cursor; **middle-drag** (or **Shift + left-drag**) pans; **F** or **view** returns to the whole-world overview
-- **1–0** select elements, **g** life, **p** people, **e** the eraser
+- **WASD** roams the map; **wheel** and **middle-drag** (or **Shift + left-drag**) also pan; **F** or **home** jumps back to the start
+- **1–0** select elements, **o** wood, **g** life, **p** people, **e** the eraser
 - Click **life** or **people** for a menu of variants (Game of Life patterns / kinds of person)
 - **[** and **]** shrink and grow the brush
 - **Space** pauses, **.** advances one frame, **c** clears the world
@@ -71,25 +72,20 @@ Spaceships (glider, lightweight spaceship) that travel, oscillators (toad, beaco
 
 ## Things worth trying
 
-- Start at the overview and use the minimap to visit the **Sunstone Dunes**, **Frost Shelf**, **Verdant Terraces**, **Skyworks**, **Ember Foundry**, **Blue Rift**, and glass-lined **Acid Cavern**. Each starts with a different palette of materials, terrain, and opportunities for a messy connection.
-- Zoom into the Ember Foundry, then cut an exit through its floor toward the Blue Rift. Lava, water, oil, steam, stone, and glass make the route change character as it opens up.
-- Poke a hole in the lava shelf's floor and let it drip into the water basin below: instant steam plumes and a growing stone stalagmite.
-- Drop fire on the oil slick floating in the basin, then watch the steam rise and rain back down.
-- Draw a line of water through the garden and watch the plants swallow it.
-- Pour acid on the sand dunes. Feel bad about it.
-- Watch the glider gun in the sky: its gliders drift down and disintegrate the instant they hit terrain. Drop a wall in their path and build a life-catcher.
+- Roam the whole strip with **WASD** (or the minimap): **the village**, **the climbs**, **the updraft**, **frostmere**, **the life gardens**, and **the meadow**. The region name shows in the corner as you go.
+- Sit in the **life gardens** and watch two Gosper guns cross fire over a pulsar, a pentadecathlon, and a drifting spaceship. Drop a wall to catch the gliders, or paint your own pattern into the open air.
+- Set a **village** hut on fire and watch the flame climb the timber. Wood is the most flammable thing in the world.
+- Take a torch to a tree: fire runs right up the trunk and into the canopy.
+- On the **frozen lake** in frostmere, break the ice cap and let a few **swimmers** paddle in the open water below.
+- Drop a **platformer** at the bottom of **the climbs** and watch it pick its way up the staggered ledges.
+- Hang around **the updraft** and watch the **daredevils** bank and swoop between the floating perches. Add a wall mid-flight to test their replanning, or their impact tolerance.
 - Pause (space), paint your own Game of Life pattern with **g**, then tap **.** to step through generations one at a time.
-- Set a plant garden on fire directly beneath the gun and watch the two automata (chemistry and Conway) run side by side.
-- Drop a crowd of **wanderers** on the dunes, then pour water beside them and add a couple of **swimmers**. Watch who goes where.
-- Set a **builder** loose on a tall sand dune and watch it mix wide shafts, stepped angled branches, and occasional mine-shaft pillars. Burn the wooden bracing afterward if you want the cave-in after all.
-- Scatter several nearby platforms and drop a **platformer** on one. It varies its compact arcs and remembers where it has just been instead of repeating a two-platform cycle.
-- Spawn **daredevils** beside a wall and watch them bank and swoop around it, slow for a deliberate landing, and loiter before flying again. Add a wall mid-flight to test their replanning—or their impact tolerance.
-- Make a moving Life spaceship wide enough to stand on and place a person above it. Riders follow the shifting cells until the pattern breaks apart beneath them.
-- Build a sealed room with and without a plant, then bury people inside to see the difference in breathable space.
+- Pour acid onto a stone cliff and carve your own cave. Feel a little bad about it.
+- Build something out of **wood** (`o`) and then decide whether it should survive the afternoon.
 
 ## How it works
 
-The world is a flat `Uint8Array`, one element id per cell, updated bottom-up once per frame. The scan direction alternates each row and frame to avoid directional bias, and a per-cell frame stamp prevents anything from moving twice in one tick. Powders fall and slide, liquids disperse sideways with per-element viscosity, gases rise and decay, and everything else is neighborhood reactions with small probabilities. Rendering writes RGBA directly into a full-world `ImageData`, crops it through a movable camera, and draws a small minimap with the camera rectangle so the 480x320 world remains easy to navigate.
+The world is a flat `Uint8Array`, one element id per cell, updated bottom-up once per frame. The scan direction alternates each row and frame to avoid directional bias, and a per-cell frame stamp prevents anything from moving twice in one tick. Powders fall and slide, liquids disperse sideways with per-element viscosity, gases rise and decay, and everything else is neighborhood reactions with small probabilities. Rendering writes RGBA directly into a full-world `ImageData`, then blits the visible slice **1:1** into a fixed camera window (no scaling, so no cell is ever dropped, which keeps Game of Life exact) and draws a small minimap with the camera rectangle so the 900x200 world stays easy to navigate.
 
 The `life` element is the exception to the in-place scan: Conway's Game of Life demands a *simultaneous* update, so it runs as its own pass every few frames, counting live neighbors from the current grid into a scratch buffer and then applying births and deaths all at once. It reuses the per-cell `life` byte as a cell's age, which drives the color gradient from newborn white-cyan to aged teal.
 
