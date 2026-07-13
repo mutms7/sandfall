@@ -2,9 +2,11 @@
 
 A tiny falling-sand alchemy sandbox in a single canvas. No framework, no build step, just HTML/CSS/JS. Paint elements onto a wide 900x200 world, drop in little people, and watch it all interact via simple local rules. The world is a side-scrolling strip of regions, a village, a platforming climb, an open flying updraft, a frozen lake, a Game of Life garden, and a meadow, that you roam through with WASD (every pixel drawn at full size, no zoom, so Game of Life stays crisp).
 
-The title up top isn't an image, it's a second little sim: each letter of **SANDFALL** is drawn out of a different ingredient (sand, water, plant, lava, fire, acid, ice, and life), rained into place, held, then collapsed and rebuilt on a loop.
+It started as a weekend toy, one grid and a handful of local rules, and it kept sprouting things I wanted to watch. Two of them became the heart of it: Conway's Game of Life running quietly up in the sky, and the little people trying to make a life in the middle of all the chaos. Everything else is really just weather for them to live in.
 
-![genre](https://img.shields.io/badge/genre-falling%20sand-e0b060) ![build](https://img.shields.io/badge/build%20step-none-3ea04e)
+🌐 **Play it live:** [sandfall-delta.vercel.app](https://sandfall-delta.vercel.app/)
+
+The title up top isn't an image, it's a second little sim: each letter of **SANDFALL** is drawn out of a different ingredient (sand, water, plant, lava, fire, acid, ice, and life), rained into place, held, then collapsed and rebuilt on a loop. One of every kind of person mills around beneath it, and a glider drifts past now and then.
 
 ## Run it
 

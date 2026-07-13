@@ -1700,6 +1700,16 @@ const endStroke = () => {
 canvas.addEventListener("pointerup", endStroke);
 canvas.addEventListener("pointercancel", endStroke);
 canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
+
+// While the brush is held still, keep laying down material at the cursor each
+// frame. That way a source like fire or water keeps flowing as its old cells
+// burn off, rise, or fall away, instead of stopping the instant you hold still.
+function emitHeld() {
+  if (!painting || panning || pastePattern) return;
+  if (strokeElement === PEOPLE) return; // people only drip along a drag, not from standing still
+  if (strokeElement === ERASER) removePeopleNear(lastX, lastY, brushRadius + 1);
+  stampBrush(lastX, lastY, strokeElement);
+}
 // The wheel scrolls the world sideways (no zoom). A vertical wheel maps to
 // horizontal travel, which is what a wide side-view wants.
 canvas.addEventListener("wheel", (ev) => {
@@ -1843,6 +1853,63 @@ function clearWorld() {
   people.length = 0;
   deaths.length = 0;
 }
+
+// ---- regenerate the world + named save states ----
+
+function regenerateWorld() {
+  clearWorld();
+  seedWorld(); // uses fresh randomness, so every regen is a slightly new world
+}
+document.getElementById("btn-reset").addEventListener("click", regenerateWorld);
+
+// Save states live in memory for the session: a name plus a full copy of the
+// three per-cell arrays and every person. Loading one drops you right back into
+// that exact moment, and you can keep several around to jump between.
+const saveStates = [];
+const savesEl = document.getElementById("saves");
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function snapshotState(name) {
+  return {
+    name,
+    cells: cells.slice(), life: life.slice(), shade: shade.slice(),
+    people: people.map((p) => structuredClone(p)),
+    frame,
+  };
+}
+
+function restoreState(s) {
+  cells.set(s.cells); life.set(s.life); shade.set(s.shade);
+  stamp.fill(0);
+  people.length = 0;
+  for (const p of s.people) { const q = structuredClone(p); q.flight = null; people.push(q); } // let flyers replan
+  deaths.length = 0;
+  frame = s.frame || 0;
+}
+
+function renderSaves() {
+  savesEl.innerHTML = "";
+  if (!saveStates.length) { savesEl.innerHTML = `<span class="saves-empty">no saved states yet</span>`; return; }
+  saveStates.forEach((s, i) => {
+    const chip = document.createElement("div");
+    chip.className = "save-chip";
+    chip.innerHTML = `<button class="chip-load" title="Load this state">${escapeHtml(s.name)}</button><button class="chip-del" title="Delete this state">&times;</button>`;
+    chip.querySelector(".chip-load").addEventListener("click", () => restoreState(s));
+    chip.querySelector(".chip-del").addEventListener("click", () => { saveStates.splice(i, 1); renderSaves(); });
+    savesEl.appendChild(chip);
+  });
+}
+
+document.getElementById("btn-save").addEventListener("click", () => {
+  const name = (prompt("Name this save state:", `state ${saveStates.length + 1}`) || "").trim();
+  if (!name) return;
+  saveStates.push(snapshotState(name));
+  renderSaves();
+});
+renderSaves();
 
 // WASD scrolls the camera around the map. Held state is polled in the loop so
 // motion is smooth and can combine (e.g. up-left) rather than stuttering.
@@ -2386,6 +2453,7 @@ let fpsFrames = 0, fpsLast = performance.now();
 
 function tick() {
   if (!paused) step();
+  emitHeld();
   panCamera();
   render();
   stepLogo();
