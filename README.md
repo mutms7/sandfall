@@ -58,14 +58,31 @@ There are a few quieter cross-system surprises too: people flee nearby fire, pla
 
 Pick a kind from the menu, then **click or drag** on the canvas to drop people (a drag sprinkles a trail of them). Right-drag removes them along with terrain. The live count sits in the corner.
 
+## Critters
+
+The other species: small wildlife that just lives in the world, each kind with its own habitat and gait. Same deal as people, click the **critters** tool for a menu, then click or drag to release them.
+
+| Kind | Behavior |
+| --- | --- |
+| **bird** | Rides the open sky in easy undulating flight, turns at walls, and bolts away from fire. Every so often it spots a fish in the water below, stoops on it, and carries it off. |
+| **fish** | Schools inside water, roaming in 2D and keeping its distance from the others so they don't stack up. It stays strictly in the pool; strand it (pull the water away, or a bird drops it) and it suffocates in the air. |
+| **frog** | Hops along the shallows and shorelines, springs away when a person looms, and now and then flicks its tongue at a nearby firefly and swallows it. |
+| **firefly** | A drifting pulse of light that's quietly drawn to the nearest person, so a little swarm trails whoever wanders by. Water douses it, and frogs eat it. |
+
+Fire and lava burn any of them up; drowning, suffocation (bury one and it runs out of air), or being eaten make them fade away. They all get saved and restored with the world.
+
+Both the **people** and **critters** menus have a &#9760; skull beside each kind to remove just that kind, and a **kill all** row at the bottom, for when you've littered down a few too many.
+
 ## Controls
 
 - **Left-drag** paints the selected element or drops people, **right-drag** erases
 - **WASD** roams the map; **wheel** and **middle-drag** (or **Shift + left-drag**) also pan; **F** or **home** jumps back to the start
-- **1–0** select elements, **o** wood, **g** life, **p** people, **e** the eraser
-- Click **life** or **people** for a menu of variants (Game of Life patterns / kinds of person)
+- **1–0** select elements, **o** wood, **g** life, **p** people, **k** critters, **e** the eraser
+- Click **life**, **people**, or **critters** for a menu of variants (Game of Life patterns / kinds of person / kinds of critter)
+- Hold the brush still and it keeps emitting, so fire, water or sand pours from one spot
 - **[** and **]** shrink and grow the brush
-- **Space** pauses, **.** advances one frame, **c** clears the world
+- **Space** pauses, **.** advances one frame, **regen** builds a fresh world, **c** clears it
+- **Save states** at the bottom: name the current world and store it (it persists across reloads); click a chip to jump back to it
 - With a life **pattern** chosen, **click the canvas** to stamp it (as many times as you like). Picking "free paint" or any element leaves stamp mode.
 
 ### Life patterns

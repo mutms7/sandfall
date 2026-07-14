@@ -280,6 +280,7 @@ function step() {
   }
   if (frame % LIFE_PERIOD === 0) stepLife();
   updatePeople();
+  updateCritters();
 }
 
 // ============================================================
@@ -598,7 +599,9 @@ const flightPassable = new Uint8Array(FLIGHT_N);
 
 function flightClearAt(x, y) {
   x = Math.round(x); y = Math.round(y);
-  if (x < 2 || x >= W - 2 || y < 3 || y >= H - 1) return false;
+  // Allow the true edge rows/columns: a daredevil resting against a border still
+  // needs its own cell to read as flight-clear, or it can never plot a takeoff.
+  if (x < 1 || x >= W - 1 || y < 2 || y >= H) return false;
   if (!bodyClear(x, y) || !bodyClear(x - 1, y) || !bodyClear(x + 1, y)) return false;
   for (let oy = -2; oy <= 1; oy++) {
     for (let ox = -2; ox <= 2; ox++) {
@@ -918,7 +921,17 @@ function decide(p) {
 
     case "daredevil": {
       if (p.onGround && p.t >= p.next) {
-        if (!startDaredevilFlight(p)) p.next = p.t + 55 + Math.random() * 85;
+        if (!startDaredevilFlight(p)) {
+          // No flightable corridor from right here (wedged against a border or
+          // stuck in a pit). Fire off a plain ballistic hop to break loose, then
+          // try to launch again from wherever it lands. Turn around when we're
+          // blocked so we don't just hop into the same wall forever.
+          if (p.blocked || Math.random() < 0.35) p.dir = -p.dir;
+          p.vy = -1.8;
+          p.vx = (0.5 + Math.random() * 0.3) * p.dir;
+          p.onGround = false;
+          p.next = p.t + 32 + Math.random() * 28;
+        }
       }
       break;
     }
@@ -1350,6 +1363,268 @@ function updatePeople() {
   updateDeaths();
 }
 
+// ============================================================
+// Critters — a second, smaller species that just lives in the
+// world alongside the people. Four kinds, each with its own
+// habitat and gait: birds ride the sky, fish dart in water,
+// beetles trundle the ground, and fireflies drift toward people.
+// ============================================================
+
+const CRITTERS = 101; // tool sentinel, never stored in the grid (people is 100)
+
+const CTYPES = {
+  bird: { label: "bird", color: [176, 196, 226], desc: "rides the sky, flees fire, dives for fish" },
+  fish: { label: "fish", color: [232, 146, 74], desc: "schools in water, suffocates if it beaches" },
+  frog: { label: "frog", color: [86, 178, 96], desc: "hops the shallows, tongues down fireflies" },
+  firefly: { label: "firefly", color: [206, 255, 130], desc: "a drifting glow, drawn to the nearest person" },
+};
+
+const MAX_CRITTERS = 600;
+const critters = [];
+let critterType = "bird";
+const CRITTER_GRAV = 0.05;
+
+function spawnCritter(x, y, type) {
+  if (critters.length >= MAX_CRITTERS) return;
+  critters.push({
+    x, y, vx: 0, vy: 0, type,
+    dir: Math.random() < 0.5 ? -1 : 1,
+    t: (Math.random() * 120) | 0, next: 0, seed: Math.random() * 6.28,
+    grounded: false, air: 180, airMax: 180,
+    tvx: 0, tvy: 0, dive: null, tongue: 0, tongueX: 0, tongueY: 0,
+    doomed: false, doomedCause: "fade",
+  });
+}
+
+function removeCrittersNear(cx, cy, r) {
+  for (let k = critters.length - 1; k >= 0; k--) {
+    const c = critters[k];
+    if (Math.abs(c.x - cx) <= r && Math.abs(c.y - cy) <= r) critters.splice(k, 1);
+  }
+}
+
+function nearestPerson(x, y, range) {
+  let best = null, bd = range * range;
+  for (const p of people) {
+    const dx = p.x - x, dy = p.y - y, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = { dx, dy, dist: Math.sqrt(d) || 1 }; }
+  }
+  return best;
+}
+
+function nearestCritter(x, y, type, range) {
+  let best = null, bd = range * range;
+  for (const c of critters) {
+    if (c.type !== type || c.doomed) continue;
+    const dx = c.x - x, dy = c.y - y, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = c; }
+  }
+  return best;
+}
+
+function critterBounds(c) {
+  if (c.x < 1) { c.x = 1; c.dir = 1; }
+  if (c.x > W - 2) { c.x = W - 2; c.dir = -1; }
+  if (c.y < 1) { c.y = 1; if (c.vy < 0) c.vy = 0; }
+  if (c.y > H - 2) { c.y = H - 2; if (c.vy > 0) c.vy = 0; }
+}
+
+// Every critter death leaves a little mark that fades out (or burns up), then
+// the critter is removed. cause "burn" for fire/lava, "fade" for everything else
+// (drowning, suffocation, being eaten).
+function critterDie(k, cause) {
+  const c = critters[k];
+  deaths.push({
+    x: c.x, y: c.y, cause: cause === "burn" ? "burn" : "fade",
+    age: 0, duration: cause === "burn" ? 30 : 46,
+    color: CTYPES[c.type].color, dir: c.dir, seed: (c.seed * 40) | 0, vx: c.vx, vy: c.vy, small: true,
+  });
+  if (deaths.length > 240) deaths.shift();
+  critters.splice(k, 1);
+}
+
+function updateBird(c) {
+  const fx = Math.round(c.x), fy = Math.round(c.y);
+  if (c.dive) {                                              // stooping on a fish
+    const f = c.dive;
+    if (f.doomed || cellAt(Math.round(f.x), Math.round(f.y)) !== E.WATER) c.dive = null;
+    else {
+      const dx = f.x - c.x, dy = f.y - c.y, d = Math.hypot(dx, dy) || 1;
+      c.vx += (dx / d * 1.3 - c.vx) * 0.22;
+      c.vy += (dy / d * 1.3 - c.vy) * 0.22;
+      c.x += c.vx; c.y += c.vy;
+      if (d < 2.6) { f.doomed = true; f.doomedCause = "fade"; c.dive = null; c.vy = -1.3; } // snatched
+      critterBounds(c);
+      return;
+    }
+  }
+  if (c.t >= c.next) { c.next = c.t + 40 + Math.random() * 90; if (Math.random() < 0.3) c.dir = -c.dir; }
+  const flee = dangerDir(fx, fy);                            // -1/+1 away from heat, 0 if clear
+  let tvx = 0.55 * c.dir;
+  let tvy = Math.sin(c.t * 0.09 + c.seed) * 0.3;             // easy undulation
+  if (solidP(fx, fy + 3) || solidP(fx + c.dir * 2, fy)) tvy -= 0.5; // pull up off the terrain
+  if (fy < 12) tvy += 0.25;                                  // don't leave the top
+  if (flee) { tvx = 0.95 * flee; tvy -= 0.5; }
+  c.vx += (tvx - c.vx) * 0.1;
+  c.vy += (tvy - c.vy) * 0.16;
+  c.x += c.vx; c.y += c.vy;
+  if (solidP(Math.round(c.x) + c.dir, Math.round(c.y))) c.dir = -c.dir; // turn at a wall
+  if (!flee && Math.random() < 0.0025) {                     // very occasionally, dive on a fish below
+    const f = nearestCritter(c.x, c.y, "fish", 64);
+    if (f && f.y > c.y + 6) c.dive = f;
+  }
+  critterBounds(c);
+}
+
+function updateFish(k, c) {
+  const fx = Math.round(c.x), fy = Math.round(c.y);
+  if (cellAt(fx, fy) === E.WATER) {
+    c.air = Math.min(c.airMax, c.air + 4);
+    if (c.t >= c.next) {                                     // pick a fresh 2-D heading now and then
+      c.next = c.t + 20 + Math.random() * 40;
+      c.tvx = (0.25 + Math.random() * 0.6) * (Math.random() < 0.5 ? -1 : 1);
+      c.tvy = (Math.random() - 0.5) * 0.7;
+    }
+    const np = nearestPerson(c.x, c.y, 22);
+    if (np) c.tvx = Math.abs(c.tvx) * (np.dx < 0 ? 1 : -1);  // bolt from a wader
+    let sx = 0, sy = 0;                                       // separation so they don't stack in a line
+    for (const o of critters) {
+      if (o === c || o.type !== "fish") continue;
+      const dx = c.x - o.x, dy = c.y - o.y, d2 = dx * dx + dy * dy;
+      if (d2 > 0 && d2 < 9) { sx += dx / d2; sy += dy / d2; }
+    }
+    c.vx += (c.tvx - c.vx) * 0.08 + sx * 0.35;
+    c.vy += (c.tvy - c.vy) * 0.08 + sy * 0.35;
+    // move only into water; reflect off the surface, bottom and banks so it never beaches itself
+    const nx = c.x + c.vx, ny = c.y + c.vy;
+    if (cellAt(Math.round(nx), Math.round(ny)) === E.WATER) { c.x = nx; c.y = ny; }
+    else if (cellAt(Math.round(nx), fy) === E.WATER) { c.x = nx; c.vy = -c.vy * 0.4; c.tvy = -c.tvy; }
+    else if (cellAt(fx, Math.round(ny)) === E.WATER) { c.y = ny; c.vx = -c.vx * 0.4; c.tvx = -c.tvx; }
+    else { c.vx = -c.vx * 0.5; c.vy = -c.vy * 0.5; c.tvx = -c.tvx; }
+    if (c.vx < -0.02) c.dir = -1; else if (c.vx > 0.02) c.dir = 1;
+  } else {
+    c.air -= 1;                                              // beached (water pulled away, or dropped by a bird)
+    c.vy += CRITTER_GRAV;
+    if (c.t >= c.next) { c.next = c.t + 12; if (solidP(fx, fy + 1)) c.vy = -0.85; c.vx = 0.5 * (waterDir(fx, fy, c.dir) || c.dir); }
+    c.x += c.vx; c.y += c.vy;
+    if (c.vy > 0 && solidP(Math.round(c.x), Math.round(c.y) + 1)) { c.y = Math.round(c.y); c.vy = 0; }
+    if (c.air <= 0) { critterDie(k, "fade"); return true; }
+  }
+  critterBounds(c);
+  return false;
+}
+
+function updateFrog(c) {
+  c.vy += CRITTER_GRAV; if (c.vy > 2) c.vy = 2;
+  c.y += c.vy;
+  let fx = Math.round(c.x), fy = Math.round(c.y);
+  if (c.vy >= 0 && solidP(fx, fy + 1)) { c.y = fy; c.vy = 0; c.grounded = true; }
+  else if (solidP(fx, fy)) { c.y = fy - 1; c.vy = 0; c.grounded = true; }
+  else c.grounded = false;
+  fy = Math.round(c.y);
+  if (c.grounded) {
+    c.vx *= 0.8; if (Math.abs(c.vx) < 0.02) c.vx = 0;        // land and settle
+    if (c.tongue <= 0 && Math.random() < 0.014) {            // flick the tongue at a close firefly
+      const ff = nearestCritter(c.x, c.y, "firefly", 15);
+      if (ff) { ff.doomed = true; ff.doomedCause = "fade"; c.tongue = 8; c.tongueX = ff.x; c.tongueY = ff.y; c.dir = ff.x < c.x ? -1 : 1; }
+    }
+    if (c.t >= c.next) {                                     // a hop
+      c.next = c.t + 46 + Math.random() * 80;
+      const np = nearestPerson(c.x, c.y, 20);
+      if (np) c.dir = np.dx < 0 ? 1 : -1; else if (Math.random() < 0.4) c.dir = -c.dir;
+      c.vy = -1.0 - Math.random() * 0.35;
+      c.vx = (0.4 + Math.random() * 0.3) * c.dir;
+    }
+  } else {                                                   // mid-hop travel
+    const nx = c.x + c.vx, nix = Math.round(nx);
+    if (solidP(nix, fy) && solidP(nix, fy - 1)) { c.vx = 0; c.dir = -c.dir; } else c.x = nx;
+  }
+  critterBounds(c);
+}
+
+function updateFirefly(k, c) {
+  const fx = Math.round(c.x), fy = Math.round(c.y);
+  if (cellAt(fx, fy) === E.WATER) { critterDie(k, "fade"); return true; } // doused
+  let ax = Math.sin(c.t * 0.11 + c.seed) * 0.13;
+  let ay = Math.cos(c.t * 0.08 + c.seed * 2) * 0.1 - 0.02;   // gentle drift, faint lift
+  const np = nearestPerson(c.x, c.y, 70);
+  if (np) { ax += (np.dx / np.dist) * 0.13; ay += (np.dy / np.dist) * 0.13; } // follow people
+  c.vx = (c.vx + ax) * 0.9;
+  c.vy = (c.vy + ay) * 0.9;
+  c.x += c.vx; c.y += c.vy;
+  if (solidP(Math.round(c.x), Math.round(c.y))) { c.y -= 1; c.vy = -0.2; } // don't sink into ground
+  critterBounds(c);
+  return false;
+}
+
+function updateCritters() {
+  for (let k = critters.length - 1; k >= 0; k--) {
+    const c = critters[k];
+    c.t++;
+    if (c.tongue > 0) c.tongue--;
+    if (c.doomed) { critterDie(k, c.doomedCause); continue; }  // eaten / marked for death, removed safely here
+    const here = cellAt(Math.round(c.x), Math.round(c.y));
+    if (here === E.FIRE || here === E.LAVA) {                 // any critter burns up
+      const i = idx(Math.round(c.x), Math.max(0, Math.round(c.y) - 1));
+      if (cells[i] === E.EMPTY) setCell(i, E.SMOKE, 12 + Math.random() * 12);
+      critterDie(k, "burn");
+      continue;
+    }
+    let died = false;
+    switch (c.type) {
+      case "bird": updateBird(c); break;
+      case "fish": died = updateFish(k, c); break;
+      case "frog": updateFrog(c); break;
+      case "firefly": died = updateFirefly(k, c); break;
+    }
+    if (died) continue;
+    if (c.type !== "fish") {                                  // suffocate if buried in solid material
+      if (SOLID_P[cellAt(Math.round(c.x), Math.round(c.y))]) {
+        c.air -= 3;
+        if (c.air <= 0) { critterDie(k, "fade"); continue; }
+      } else c.air = Math.min(c.airMax, c.air + 4);
+    }
+  }
+}
+
+function drawCritters() {
+  for (const c of critters) {
+    const fx = Math.round(c.x), fy = Math.round(c.y);
+    const col = CTYPES[c.type].color;
+    if (c.type === "bird") {
+      const flap = (frame >> 2 & 1) ? 1 : 0;                  // little wing beat
+      putPx(fx, fy, col[0], col[1], col[2]);
+      putPx(fx - 1, fy - flap, col[0] * 0.85, col[1] * 0.85, col[2] * 0.85);
+      putPx(fx + 1, fy - flap, col[0] * 0.85, col[1] * 0.85, col[2] * 0.85);
+    } else if (c.type === "fish") {
+      putPx(fx, fy, col[0], col[1], col[2]);
+      putPx(fx - c.dir, fy, col[0] * 0.7, col[1] * 0.7, col[2] * 0.7); // tail behind it
+    } else if (c.type === "frog") {
+      putPx(fx, fy, col[0], col[1], col[2]);                  // body
+      putPx(fx, fy - 1, col[0] * 1.15, col[1] * 1.15, col[2] * 1.15); // head
+      putPx(fx - c.dir, fy, col[0] * 0.7, col[1] * 0.7, col[2] * 0.7); // haunch
+      if (c.tongue > 0) {                                     // tongue snapping out to the firefly
+        const tx = Math.round(c.tongueX), ty = Math.round(c.tongueY), hy = fy - 1;
+        const steps = Math.max(1, Math.abs(tx - fx) + Math.abs(ty - hy));
+        for (let s = 0; s <= steps; s++) { const t = s / steps; putPx(Math.round(fx + (tx - fx) * t), Math.round(hy + (ty - hy) * t), 226, 96, 120); }
+      }
+    } else { // firefly: pulsing glow
+      const pulse = 0.55 + 0.45 * Math.sin(c.t * 0.2 + c.seed);
+      blendPx(fx, fy, 255, 250, 190, pulse);
+      blendPx(fx - 1, fy, col[0], col[1], col[2], pulse * 0.5);
+      blendPx(fx + 1, fy, col[0], col[1], col[2], pulse * 0.5);
+      blendPx(fx, fy - 1, col[0], col[1], col[2], pulse * 0.5);
+      blendPx(fx, fy + 1, col[0], col[1], col[2], pulse * 0.5);
+    }
+  }
+}
+
+// bulk-remove tools for the menus (instant, for tidying up an over-crowded world)
+function killPeopleOfType(t) { for (let k = people.length - 1; k >= 0; k--) if (people[k].type === t) people.splice(k, 1); }
+function killAllPeople() { people.length = 0; }
+function killCrittersOfType(t) { for (let k = critters.length - 1; k >= 0; k--) if (critters[k].type === t) critters.splice(k, 1); }
+function killAllCritters() { critters.length = 0; }
+
 // ---------- rendering ----------
 
 const canvas = document.getElementById("world");
@@ -1490,6 +1765,19 @@ function drawDeaths() {
     const x = Math.round(d.x), baseY = Math.round(d.y);
     const t = d.age / d.duration;
     const c = d.color;
+    if (d.small) {                                   // a critter dying: a tiny fade or burn-up
+      const fade = 1 - t;
+      if (d.cause === "burn") {
+        const rise = Math.floor(d.age * 0.12);
+        blendPx(x, baseY - rise, 255, 140 + ((d.age + d.seed) & 63), 30, fade);
+        blendPx(x + ((d.seed >> 1 & 1) ? 1 : -1), baseY - 1 - rise, 255, 90, 20, fade * 0.7);
+      } else {                                       // fade away, drifting up a touch
+        const rise = Math.floor(d.age * 0.06);
+        blendPx(x, baseY - rise, c[0], c[1], c[2], fade * 0.85);
+        blendPx(x, baseY - 1 - rise, c[0] * 1.1, c[1] * 1.1, c[2] * 1.1, fade * 0.5);
+      }
+      continue;
+    }
     if (d.cause === "impact") {
       const fade = 1 - t;
       const spread = Math.min(4, d.age * 0.09);
@@ -1564,6 +1852,7 @@ function render() {
     px[p] = r; px[p + 1] = g; px[p + 2] = b; px[p + 3] = 255;
   }
   drawPeople();
+  drawCritters();
   drawDeaths();
   worldCtx.putImageData(img, 0, 0);
   const view = viewRect();
@@ -1667,8 +1956,9 @@ canvas.addEventListener("pointerdown", (ev) => {
   strokeElement = ev.button === 2 ? ERASER : currentElement;
   lastX = x; lastY = y; peopleAccum = 0;
   if (strokeElement === PEOPLE) spawnPerson(x, y, peopleType);
+  else if (strokeElement === CRITTERS) spawnCritter(x, y, critterType);
   else {
-    if (strokeElement === ERASER) removePeopleNear(x, y, brushRadius + 1);
+    if (strokeElement === ERASER) { removePeopleNear(x, y, brushRadius + 1); removeCrittersNear(x, y, brushRadius + 1); }
     stampBrush(x, y, strokeElement);
   }
 });
@@ -1685,8 +1975,11 @@ canvas.addEventListener("pointermove", (ev) => {
   if (strokeElement === PEOPLE) {
     peopleAccum += Math.hypot(x - lastX, y - lastY);
     while (peopleAccum >= 5) { peopleAccum -= 5; spawnPerson(x, y, peopleType); }
+  } else if (strokeElement === CRITTERS) {
+    peopleAccum += Math.hypot(x - lastX, y - lastY);
+    while (peopleAccum >= 6) { peopleAccum -= 6; spawnCritter(x, y, critterType); }
   } else {
-    if (strokeElement === ERASER) removePeopleNear(x, y, brushRadius + 1);
+    if (strokeElement === ERASER) { removePeopleNear(x, y, brushRadius + 1); removeCrittersNear(x, y, brushRadius + 1); }
     paintLine(lastX, lastY, x, y, strokeElement);
   }
   lastX = x; lastY = y;
@@ -1706,8 +1999,8 @@ canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
 // burn off, rise, or fall away, instead of stopping the instant you hold still.
 function emitHeld() {
   if (!painting || panning || pastePattern) return;
-  if (strokeElement === PEOPLE) return; // people only drip along a drag, not from standing still
-  if (strokeElement === ERASER) removePeopleNear(lastX, lastY, brushRadius + 1);
+  if (strokeElement === PEOPLE || strokeElement === CRITTERS) return; // these only drip along a drag
+  if (strokeElement === ERASER) { removePeopleNear(lastX, lastY, brushRadius + 1); removeCrittersNear(lastX, lastY, brushRadius + 1); }
   stampBrush(lastX, lastY, strokeElement);
 }
 // The wheel scrolls the world sideways (no zoom). A vertical wheel maps to
@@ -1735,6 +2028,7 @@ const PALETTE = [
   { e: E.WOOD, label: "wood", key: "o" },
   { e: E.LIFE, label: "life", key: "g", menu: "life" },
   { e: PEOPLE, label: "people", key: "p", menu: "people" },
+  { e: CRITTERS, label: "critters", key: "k", menu: "critters" },
   { e: ERASER, label: "erase", key: "e" },
 ];
 
@@ -1743,7 +2037,7 @@ const SWATCH = {
   [E.PLANT]: "#3ea04e", [E.FIRE]: "#ff8c28", [E.OIL]: "#684e30",
   [E.LAVA]: "#e04a12", [E.STONE]: "#8a8d94", [E.ACID]: "#80de2a",
   [E.ICE]: "#a8d8f0", [E.WOOD]: "#8a5a2e", [E.LIFE]: "#7cffd8",
-  [PEOPLE]: "#cfd6e2", [ERASER]: "#05060a",
+  [PEOPLE]: "#cfd6e2", [CRITTERS]: "#b0c4e2", [ERASER]: "#05060a",
 };
 
 const paletteEl = document.getElementById("palette");
@@ -1797,12 +2091,17 @@ function onDocDown(ev) {
 function openMenu(btn, kind) {
   if (openBtn === btn) { closeMenu(); return; } // toggle
   closeMenu();
-  const items = kind === "life" ? LIFE_MENU : PEOPLE_MENU;
+  const items = kind === "life" ? LIFE_MENU : kind === "people" ? PEOPLE_MENU : CRITTER_MENU;
+  const heads = { life: "game of life", people: "kind of person", critters: "kind of critter" };
   const pop = document.createElement("div");
   pop.className = "popover";
-  pop.innerHTML = `<div class="popover-head">${kind === "life" ? "game of life" : "kind of person"}</div>`;
-  const chosenVal = kind === "life" ? currentLifeChoice : peopleType;
+  pop.innerHTML = `<div class="popover-head">${heads[kind]}</div>`;
+  const chosenVal = kind === "life" ? currentLifeChoice : kind === "people" ? peopleType : critterType;
+  const killType = kind === "people" ? killPeopleOfType : kind === "critters" ? killCrittersOfType : null;
+  const killAll = kind === "people" ? killAllPeople : kind === "critters" ? killAllCritters : null;
   for (const item of items) {
+    const row = document.createElement("div");
+    row.className = "menu-row";
     const it = document.createElement("button");
     it.className = "popover-item" + (item.value === chosenVal ? " chosen" : "");
     it.innerHTML =
@@ -1810,7 +2109,23 @@ function openMenu(btn, kind) {
       `<span class="p-text"><span class="p-name">${item.name}</span>` +
       (item.desc ? `<span class="p-desc">${item.desc}</span>` : "") + `</span>`;
     it.addEventListener("click", () => { item.pick(); closeMenu(); });
-    pop.appendChild(it);
+    row.appendChild(it);
+    if (killType) {                                          // a skull to cull just this kind
+      const skull = document.createElement("button");
+      skull.className = "chip-kill";
+      skull.title = `Remove all ${item.name}s`;
+      skull.textContent = "☠";
+      skull.addEventListener("click", (ev) => { ev.stopPropagation(); killType(item.value); });
+      row.appendChild(skull);
+    }
+    pop.appendChild(row);
+  }
+  if (killAll) {                                             // one button to clear the whole species
+    const all = document.createElement("button");
+    all.className = "popover-item kill-all";
+    all.innerHTML = `<span class="dot" style="background:#e0483a"></span><span class="p-text"><span class="p-name">&#9760; kill all ${kind === "people" ? "people" : "critters"}</span></span>`;
+    all.addEventListener("click", () => { killAll(); closeMenu(); });
+    pop.appendChild(all);
   }
   document.body.appendChild(pop);
   const r = btn.getBoundingClientRect();
@@ -1851,6 +2166,7 @@ function clearWorld() {
   life.fill(0);
   stamp.fill(0);
   people.length = 0;
+  critters.length = 0;
   deaths.length = 0;
 }
 
@@ -1862,14 +2178,33 @@ function regenerateWorld() {
 }
 document.getElementById("btn-reset").addEventListener("click", regenerateWorld);
 
-// Save states live in memory for the session: a name plus a full copy of the
-// three per-cell arrays and every person. Loading one drops you right back into
-// that exact moment, and you can keep several around to jump between.
+// Save states: a name plus a full copy of the grid and everything living in it.
+// They persist to localStorage (run-length encoded, since the world is mostly
+// long runs of stone/empty/water) so they survive a reload or a regen, not just
+// the current session. Loading one drops you right back into that exact moment.
+const MAX_SAVES = 8;
+const SAVE_KEY = "sandfall.saves.v1";
 const saveStates = [];
 const savesEl = document.getElementById("saves");
+const saveNameInput = document.getElementById("save-name");
 
 function escapeHtml(s) {
   return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function rleEncode(arr) {
+  const out = [];
+  let i = 0;
+  while (i < arr.length) {
+    const v = arr[i]; let j = i + 1;
+    while (j < arr.length && arr[j] === v && j - i < 1e9) j++;
+    out.push(v + "." + (j - i)); i = j;
+  }
+  return out.join(",");
+}
+function rleDecode(str, arr) {
+  let i = 0;
+  if (str) for (const tok of str.split(",")) { const dot = tok.indexOf("."); const v = +tok.slice(0, dot), n = +tok.slice(dot + 1); for (let k = 0; k < n; k++) arr[i++] = v; }
 }
 
 function snapshotState(name) {
@@ -1877,38 +2212,74 @@ function snapshotState(name) {
     name,
     cells: cells.slice(), life: life.slice(), shade: shade.slice(),
     people: people.map((p) => structuredClone(p)),
+    critters: critters.map((c) => structuredClone(c)),
     frame,
   };
 }
 
 function restoreState(s) {
-  cells.set(s.cells); life.set(s.life); shade.set(s.shade);
+  cells.set(s.cells); life.set(s.life);
+  if (s.shade) shade.set(s.shade);
+  else for (let i = 0; i < N; i++) shade[i] = (Math.random() * 256) | 0; // reloaded save: reroll the color noise
   stamp.fill(0);
   people.length = 0;
   for (const p of s.people) { const q = structuredClone(p); q.flight = null; people.push(q); } // let flyers replan
+  critters.length = 0;
+  for (const c of (s.critters || [])) critters.push(structuredClone(c));
   deaths.length = 0;
   frame = s.frame || 0;
 }
 
+// shade is per-cell random noise (no runs, so not worth storing); it re-rolls on load.
+function persistSaves() {
+  try {
+    const payload = saveStates.map((s) => ({
+      name: s.name, cells: rleEncode(s.cells), life: rleEncode(s.life),
+      people: s.people, critters: s.critters, frame: s.frame,
+    }));
+    localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
+  } catch (e) { /* private mode or over quota: keep them in memory for the session */ }
+}
+
+function loadPersistedSaves() {
+  let raw;
+  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { return; }
+  if (!raw) return;
+  try {
+    for (const p of JSON.parse(raw)) {
+      const cellsArr = new Uint8Array(N), lifeArr = new Uint8Array(N);
+      rleDecode(p.cells, cellsArr); rleDecode(p.life, lifeArr);
+      saveStates.push({ name: p.name, cells: cellsArr, life: lifeArr, shade: null, people: p.people || [], critters: p.critters || [], frame: p.frame || 0 });
+    }
+  } catch (e) { /* corrupt payload: ignore */ }
+}
+
 function renderSaves() {
   savesEl.innerHTML = "";
-  if (!saveStates.length) { savesEl.innerHTML = `<span class="saves-empty">no saved states yet</span>`; return; }
+  if (!saveStates.length) { savesEl.innerHTML = `<span class="saves-empty">none yet</span>`; return; }
   saveStates.forEach((s, i) => {
     const chip = document.createElement("div");
     chip.className = "save-chip";
     chip.innerHTML = `<button class="chip-load" title="Load this state">${escapeHtml(s.name)}</button><button class="chip-del" title="Delete this state">&times;</button>`;
     chip.querySelector(".chip-load").addEventListener("click", () => restoreState(s));
-    chip.querySelector(".chip-del").addEventListener("click", () => { saveStates.splice(i, 1); renderSaves(); });
+    chip.querySelector(".chip-del").addEventListener("click", () => { saveStates.splice(i, 1); renderSaves(); persistSaves(); });
     savesEl.appendChild(chip);
   });
 }
 
-document.getElementById("btn-save").addEventListener("click", () => {
-  const name = (prompt("Name this save state:", `state ${saveStates.length + 1}`) || "").trim();
-  if (!name) return;
+function saveCurrentState() {
+  const name = (saveNameInput.value || "").trim() || `state ${saveStates.length + 1}`;
   saveStates.push(snapshotState(name));
+  while (saveStates.length > MAX_SAVES) saveStates.shift(); // keep the newest few
+  saveNameInput.value = "";
   renderSaves();
-});
+  persistSaves();
+}
+
+document.getElementById("btn-save").addEventListener("click", saveCurrentState);
+saveNameInput.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); saveCurrentState(); } });
+
+loadPersistedSaves();
 renderSaves();
 
 // WASD scrolls the camera around the map. Held state is polled in the loop so
@@ -2043,9 +2414,20 @@ const PEOPLE_MENU = Object.entries(PTYPES).map(([key, t]) => ({
   },
 }));
 
-// seed the two sub-labels with their defaults
+const CRITTER_MENU = Object.entries(CTYPES).map(([key, t]) => ({
+  value: key, name: t.label, desc: t.desc,
+  color: `rgb(${t.color[0]},${t.color[1]},${t.color[2]})`,
+  pick() {
+    critterType = key;
+    selectElement(CRITTERS);
+    subLabels.get(CRITTERS).textContent = t.label;
+  },
+}));
+
+// seed the sub-labels with their defaults
 subLabels.get(E.LIFE).textContent = "free paint";
 subLabels.get(PEOPLE).textContent = PTYPES[peopleType].label;
+subLabels.get(CRITTERS).textContent = CTYPES[critterType].label;
 
 selectElement(E.SAND);
 
@@ -2208,18 +2590,16 @@ function seedWorld() {
   for (const [px] of [[344], [378], [410], [440]]) fillCol(px, 92 + (px % 3) * 4, BEDROCK - 1, E.STONE); // pillars
   for (const [x, y] of perches) platform(x, x + 9, y, E.STONE);
 
-  // ---- FROSTMERE (470-630): a frozen lake, snow, drifting bergs (swimmers) ----
-  for (let x = 470; x < 630; x++) {
-    setCell(idx(x, surf[x]), E.ICE);
-    if (Math.random() < 0.5) setCell(idx(x, surf[x] - 1), E.ICE);
-  }
+  // ---- FROSTMERE (470-630): an OPEN snow-rimmed lake (swimmers + fish) ----
+  // Snow sits on the shores only, never on the water: ice creep would otherwise
+  // freeze the whole lake solid in under a minute and there'd be no water left.
   const sea = surf[498];
-  for (let x = 498; x <= 602; x++) {
-    if (surf[x] > sea) { fillCol(x, sea + 1, surf[x] - 1, E.WATER); setCell(idx(x, sea), E.ICE); } // ice cap on the lake
-  }
-  for (let x = 490; x < 498; x++) fillCol(x, surf[x] - 1, surf[x] + 2, E.SAND); // beach
-  for (let x = 602; x < 612; x++) fillCol(x, surf[x] - 1, surf[x] + 2, E.SAND);
-  blob(536, sea + 6, 4, 2, E.ICE); blob(572, sea + 5, 3, 2, E.ICE); // bergs
+  for (let x = 498; x <= 602; x++) if (surf[x] > sea) fillCol(x, sea + 1, surf[x] - 1, E.WATER); // open water
+  for (let x = 470; x < 494; x++) { setCell(idx(x, surf[x]), E.ICE); if (Math.random() < 0.5) setCell(idx(x, surf[x] - 1), E.ICE); }
+  for (let x = 606; x < 630; x++) { setCell(idx(x, surf[x]), E.ICE); if (Math.random() < 0.5) setCell(idx(x, surf[x] - 1), E.ICE); }
+  for (let x = 492; x < 500; x++) fillCol(x, surf[x] - 1, surf[x] + 2, E.SAND); // sandy beach buffers ice from water
+  for (let x = 600; x < 608; x++) fillCol(x, surf[x] - 1, surf[x] + 2, E.SAND);
+  blob(486, sea - 14, 6, 4, E.ICE); blob(614, sea - 12, 5, 4, E.ICE); // icy bluffs above the shore, clear of the water
 
   // ---- THE LIFE GARDENS (630-830): open sky full of Game of Life builds ----
   for (let x = 630; x < 830; x++) setCell(idx(x, surf[x]), E.PLANT);
@@ -2249,6 +2629,19 @@ function seedWorld() {
   for (let x = 640; x < 824; x += 22) spawnOn(x, Math.random() < 0.5 ? "wanderer" : "adventurer"); // life gardens
   for (let x = 834; x < 896; x += 12) spawnOn(x, Math.random() < 0.5 ? "adventurer" : "wanderer"); // meadow
   spawnOn(196, "digger"); spawnOn(286, "digger"); spawnOn(120, "digger");                          // a few miners
+
+  // ---- critters, the wildlife ----
+  for (let x = 40; x < W; x += 70) spawnCritter(x, 24 + Math.random() * 30, "bird");                // birds across the sky
+  for (let x = 512; x <= 588; x += 6) {                                                             // fish in the deep of the lake
+    let top = -1, bot = -1;
+    for (let y = 128; y < H - 4; y++) if (cellAt(x, y) === E.WATER) { if (top < 0) top = y; bot = y; }
+    if (top >= 0 && bot - top >= 3) spawnCritter(x, (top + bot) >> 1, "fish");                       // mid-depth, clear of the ice cap
+  }
+  for (let x = 20; x < 150; x += 24) spawnCritter(x, 60, "frog");                                    // frogs: village
+  for (let x = 300; x < 350; x += 16) spawnCritter(x, 60, "frog");                                   //        jungle-ish
+  for (let x = 835; x < 895; x += 20) spawnCritter(x, 60, "frog");                                   //        meadow
+  for (let n = 0; n < 10; n++) spawnCritter(30 + Math.random() * 120, 70 + Math.random() * 40, "firefly"); // fireflies over the village
+  for (let n = 0; n < 8; n++) spawnCritter(650 + Math.random() * 170, 60 + Math.random() * 50, "firefly");  // and the life gardens
 }
 
 seedWorld();
@@ -2462,7 +2855,7 @@ function tick() {
   const now = performance.now();
   if (now - fpsLast >= 500) {
     fpsEl.textContent = `${Math.round(fpsFrames * 1000 / (now - fpsLast))} fps`;
-    popEl.textContent = `${people.length} people`;
+    popEl.textContent = `${people.length} people · ${critters.length} critters`;
     fpsFrames = 0;
     fpsLast = now;
   }
