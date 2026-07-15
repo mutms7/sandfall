@@ -39,7 +39,7 @@ test("index.html exposes the simulation speed controls", () => {
 });
 
 test("timing contract keeps speed on world ticks and raw elapsed time for Life", () => {
-  assert.match(mainSource, /const SIM_STEP_MS = 50\s*;/);
+  assert.match(mainSource, /const SIM_STEP_MS = 1000\s*\/\s*60\s*;/);
   assert.match(mainSource, /const LIFE_STEP_MS = 100\s*;/);
   assert.match(mainSource, /const SIM_SPEEDS = \[0\.5,\s*1,\s*2,\s*4\];/);
 

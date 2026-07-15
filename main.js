@@ -33,12 +33,11 @@ let frame = 0;
 // fixed step makes the falling-sand rules and people move at the same speed on
 // every monitor, while the Life cadence below is expressed in elapsed time
 // instead of display frames.
-const SIM_STEP_MS = 50;
+const SIM_STEP_MS = 1000 / 60;
 const LIFE_STEP_MS = 100;
-// Per-frame safety limits retain any unprocessed accumulator backlog. Twenty
-// world ticks covers 4× speed at 10 FPS; twenty Life generations covers the
-// 10 Hz cadence after a one-second visible frame stall without dropping time.
-const MAX_WORLD_CATCH_UP_STEPS = 20;
+// Per-frame safety limits retain any unprocessed accumulator backlog. Thirty
+// world ticks cover 4× speed during a 10 FPS frame; excess backlog is retained.
+const MAX_WORLD_CATCH_UP_STEPS = 30;
 const MAX_LIFE_CATCH_UP_STEPS = 20;
 const MAX_LOGO_CATCH_UP_STEPS = 20;
 const SIM_SPEEDS = [0.5, 1, 2, 4];
@@ -2949,7 +2948,7 @@ function tick(timestamp) {
     simulationAccumulator = 0;
   }
   // The logo is an independent miniature simulation: it keeps animating while
-  // the world is paused, advances on the same fixed 20Hz cadence, and uses
+  // the world is paused, advances on the same fixed 60Hz cadence, and uses
   // the same speed multiplier as the ordinary world. Any visible backlog is
   // retained for later frames rather than discarded.
   logoAccumulator += elapsed * SIM_SPEEDS[simulationSpeedIndex];
