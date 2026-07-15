@@ -29,7 +29,21 @@ const stamp = new Uint32Array(N);  // frame a cell last moved (skip double updat
 const lifeNext = new Uint8Array(N); // scratch buffer for the next GoL generation
 let frame = 0;
 
-const LIFE_PERIOD = 6; // frames between Game-of-Life generations (lower = faster)
+// Simulation time is deliberately slower than the display refresh. Keeping a
+// fixed step makes the falling-sand rules and people move at the same speed on
+// every monitor, while the Life cadence below is expressed in elapsed time
+// instead of display frames.
+const SIM_STEP_MS = 50;
+const LIFE_STEP_MS = 100;
+// Per-frame safety limits retain any unprocessed accumulator backlog. Twenty
+// world ticks covers 4× speed at 10 FPS; twenty Life generations covers the
+// 10 Hz cadence after a one-second visible frame stall without dropping time.
+const MAX_WORLD_CATCH_UP_STEPS = 20;
+const MAX_LIFE_CATCH_UP_STEPS = 20;
+const MAX_LOGO_CATCH_UP_STEPS = 20;
+const SIM_SPEEDS = [0.5, 1, 2, 4];
+let simulationSpeedIndex = 1;
+let lifeElapsedMs = 0;
 
 // lookup tables (arrays beat Sets in the hot loop); sized past the last id
 const IS_LIQUID = new Uint8Array(32);
@@ -256,6 +270,20 @@ function stepLife() {
   }
 }
 
+function advanceLifeElapsed(elapsedMs) {
+  if (!(elapsedMs > 0)) return;
+  // Life follows elapsed wall-clock time while running. The page lifecycle
+  // handlers below discard time spent hidden; visible backlog is drained over
+  // later frames when a single frame exceeds the defensive work limit.
+  lifeElapsedMs += elapsedMs;
+  let generations = 0;
+  while (lifeElapsedMs >= LIFE_STEP_MS && generations < MAX_LIFE_CATCH_UP_STEPS) {
+    stepLife();
+    lifeElapsedMs -= LIFE_STEP_MS;
+    generations++;
+  }
+}
+
 function step() {
   frame++;
   for (let y = H - 1; y >= 0; y--) {
@@ -278,9 +306,13 @@ function step() {
       }
     }
   }
-  if (frame % LIFE_PERIOD === 0) stepLife();
   updatePeople();
   updateCritters();
+}
+
+function manualStep() {
+  step();
+  advanceLifeElapsed(SIM_STEP_MS);
 }
 
 // ============================================================
@@ -2150,13 +2182,33 @@ brushSlider.addEventListener("input", () => {
 });
 
 const pauseBtn = document.getElementById("btn-pause");
+const speedLabel = document.getElementById("speed-label");
+const slowerBtn = document.getElementById("btn-slower");
+const fasterBtn = document.getElementById("btn-faster");
+function updateSpeedLabel() {
+  const speed = SIM_SPEEDS[simulationSpeedIndex];
+  speedLabel.textContent = `${speed}×`;
+  speedLabel.setAttribute("aria-label", `Simulation speed ${speed}×`);
+  slowerBtn.disabled = simulationSpeedIndex === 0;
+  fasterBtn.disabled = simulationSpeedIndex === SIM_SPEEDS.length - 1;
+}
+function setSimulationSpeed(nextIndex) {
+  simulationSpeedIndex = Math.max(0, Math.min(SIM_SPEEDS.length - 1, nextIndex));
+  updateSpeedLabel();
+}
+function changeSimulationSpeed(direction) {
+  setSimulationSpeed(simulationSpeedIndex + direction);
+}
+slowerBtn.addEventListener("click", () => changeSimulationSpeed(-1));
+fasterBtn.addEventListener("click", () => changeSimulationSpeed(1));
+updateSpeedLabel();
 function setPaused(p) {
   paused = p;
   pauseBtn.classList.toggle("active", paused);
   pauseBtn.innerHTML = paused ? "&#9654; resume" : "&#10074;&#10074; pause";
 }
 pauseBtn.addEventListener("click", () => setPaused(!paused));
-document.getElementById("btn-step").addEventListener("click", () => { step(); });
+document.getElementById("btn-step").addEventListener("click", manualStep);
 document.getElementById("btn-overview").addEventListener("click", resetCamera);
 document.getElementById("btn-clear").addEventListener("click", clearWorld);
 updateViewInfo();
@@ -2165,6 +2217,7 @@ function clearWorld() {
   cells.fill(E.EMPTY);
   life.fill(0);
   stamp.fill(0);
+  lifeElapsedMs = 0;
   people.length = 0;
   critters.length = 0;
   deaths.length = 0;
@@ -2213,7 +2266,7 @@ function snapshotState(name) {
     cells: cells.slice(), life: life.slice(), shade: shade.slice(),
     people: people.map((p) => structuredClone(p)),
     critters: critters.map((c) => structuredClone(c)),
-    frame,
+    frame, lifeElapsedMs,
   };
 }
 
@@ -2228,6 +2281,7 @@ function restoreState(s) {
   for (const c of (s.critters || [])) critters.push(structuredClone(c));
   deaths.length = 0;
   frame = s.frame || 0;
+  lifeElapsedMs = Number.isFinite(s.lifeElapsedMs) ? s.lifeElapsedMs : 0;
 }
 
 // shade is per-cell random noise (no runs, so not worth storing); it re-rolls on load.
@@ -2236,6 +2290,7 @@ function persistSaves() {
     const payload = saveStates.map((s) => ({
       name: s.name, cells: rleEncode(s.cells), life: rleEncode(s.life),
       people: s.people, critters: s.critters, frame: s.frame,
+      lifeElapsedMs: s.lifeElapsedMs,
     }));
     localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
   } catch (e) { /* private mode or over quota: keep them in memory for the session */ }
@@ -2249,7 +2304,7 @@ function loadPersistedSaves() {
     for (const p of JSON.parse(raw)) {
       const cellsArr = new Uint8Array(N), lifeArr = new Uint8Array(N);
       rleDecode(p.cells, cellsArr); rleDecode(p.life, lifeArr);
-      saveStates.push({ name: p.name, cells: cellsArr, life: lifeArr, shade: null, people: p.people || [], critters: p.critters || [], frame: p.frame || 0 });
+      saveStates.push({ name: p.name, cells: cellsArr, life: lifeArr, shade: null, people: p.people || [], critters: p.critters || [], frame: p.frame || 0, lifeElapsedMs: Number.isFinite(p.lifeElapsedMs) ? p.lifeElapsedMs : 0 });
     }
   } catch (e) { /* corrupt payload: ignore */ }
 }
@@ -2301,7 +2356,11 @@ function panCamera() {
 }
 
 document.addEventListener("keydown", (ev) => {
-  if (ev.target instanceof HTMLInputElement) return;
+  const target = ev.target;
+  if (target instanceof HTMLElement && (
+    target.matches("input, textarea, select, button, a, [contenteditable='true'], [role='button'], [role='textbox']")
+    || target.isContentEditable
+  )) return;
   const k = ev.key.toLowerCase();
   if (k === "w" || k === "a" || k === "s" || k === "d") {
     if (!ev.repeat) panKeys[k] = true;
@@ -2309,7 +2368,9 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
   if (ev.key === " ") { ev.preventDefault(); setPaused(!paused); return; }
-  if (ev.key === ".") { step(); return; }
+  if (ev.key === ".") { manualStep(); return; }
+  if (ev.key === "-") { ev.preventDefault(); changeSimulationSpeed(-1); return; }
+  if (ev.key === "=" || ev.key === "+") { ev.preventDefault(); changeSimulationSpeed(1); return; }
   if (ev.key === "f" || ev.key === "F") { resetCamera(); return; }
   if (ev.key === "c" || ev.key === "C") { clearWorld(); return; }
   if (ev.key === "[") { brushSlider.value = String(Math.max(1, brushRadius - 1)); brushSlider.dispatchEvent(new Event("input")); return; }
@@ -2843,23 +2904,74 @@ function renderLogo() {
 const fpsEl = document.getElementById("fps");
 const popEl = document.getElementById("pop-count");
 let fpsFrames = 0, fpsLast = performance.now();
+let simulationAccumulator = 0;
+let logoAccumulator = 0;
+let lastTickTime = null;
 
-function tick() {
-  if (!paused) step();
+// A hidden/backgrounded page can pause RAF for an arbitrary amount of time.
+// Resetting the clock at lifecycle boundaries discards that gap without
+// throttling catch-up during ordinary visible, low-FPS rendering.
+function suspendTickClock() { lastTickTime = null; }
+document.addEventListener("visibilitychange", suspendTickClock);
+window.addEventListener("pagehide", suspendTickClock);
+window.addEventListener("pageshow", suspendTickClock);
+
+function tick(timestamp) {
+  if (document.hidden) {
+    lastTickTime = null;
+    requestAnimationFrame(tick);
+    return;
+  }
+  const fallbackNow = performance.now();
+  const candidateNow = Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : fallbackNow;
+  const validNow = Number.isFinite(candidateNow) && candidateNow >= 0;
+  const now = validNow ? candidateNow : 0;
+  const elapsed = !validNow || lastTickTime === null || !Number.isFinite(lastTickTime) || now < lastTickTime
+    ? 0
+    : now - lastTickTime;
+  lastTickTime = validNow ? now : null;
+
+  if (!paused) {
+    // Life uses the actual elapsed RAF time, independently of the fixed-step
+    // sand accumulator below; any visible backlog remains queued if this
+    // frame reaches the defensive work limit.
+    advanceLifeElapsed(elapsed);
+    simulationAccumulator += elapsed * SIM_SPEEDS[simulationSpeedIndex];
+    let worldUpdates = 0;
+    while (simulationAccumulator >= SIM_STEP_MS && worldUpdates < MAX_WORLD_CATCH_UP_STEPS) {
+      step();
+      simulationAccumulator -= SIM_STEP_MS;
+      worldUpdates++;
+    }
+  } else {
+    // Do not accumulate time while paused; resuming should continue from the
+    // current state rather than replaying the time spent in the pause menu.
+    simulationAccumulator = 0;
+  }
+  // The logo is an independent miniature simulation: it keeps animating while
+  // the world is paused, advances on the same fixed 20Hz cadence, and uses
+  // the same speed multiplier as the ordinary world. Any visible backlog is
+  // retained for later frames rather than discarded.
+  logoAccumulator += elapsed * SIM_SPEEDS[simulationSpeedIndex];
+  let logoUpdates = 0;
+  while (logoAccumulator >= SIM_STEP_MS && logoUpdates < MAX_LOGO_CATCH_UP_STEPS) {
+    stepLogo();
+    logoAccumulator -= SIM_STEP_MS;
+    logoUpdates++;
+  }
   emitHeld();
   panCamera();
   render();
-  stepLogo();
   renderLogo();
   fpsFrames++;
-  const now = performance.now();
-  if (now - fpsLast >= 500) {
-    fpsEl.textContent = `${Math.round(fpsFrames * 1000 / (now - fpsLast))} fps`;
+  const fpsNow = performance.now();
+  if (fpsNow - fpsLast >= 500) {
+    fpsEl.textContent = `${Math.round(fpsFrames * 1000 / (fpsNow - fpsLast))} fps`;
     popEl.textContent = `${people.length} people · ${critters.length} critters`;
     fpsFrames = 0;
-    fpsLast = now;
+    fpsLast = fpsNow;
   }
   requestAnimationFrame(tick);
 }
 
-tick();
+tick(performance.now());

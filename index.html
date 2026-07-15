@@ -47,8 +47,13 @@
         <input type="range" id="brush-size" min="1" max="16" value="4" />
         <span id="brush-size-value">4</span>
       </label>
+      <div class="speed-controls" role="group" aria-label="Simulation speed">
+        <button id="btn-slower" title="Slow simulation (-)">&#8722; slower</button>
+        <span id="speed-label" aria-live="polite">1&#215;</span>
+        <button id="btn-faster" title="Speed up simulation (= or +)">faster &#43;</button>
+      </div>
       <button id="btn-pause" title="Pause / resume (Space)">&#10074;&#10074; pause</button>
-      <button id="btn-step" title="Advance one frame (.)">step</button>
+      <button id="btn-step" title="Advance one simulation tick (.)">step</button>
       <button id="btn-overview" title="Jump back to the start (F)">&#8962; home</button>
       <button id="btn-reset" title="Regenerate a fresh world">&#10227; regen</button>
       <button id="btn-clear" title="Clear the world (C)">clear</button>

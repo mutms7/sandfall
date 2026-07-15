@@ -266,6 +266,8 @@ main {
 
 #controls button:hover { border-color: #3a4557; background: #121826; }
 #controls button.active { border-color: var(--accent); color: var(--accent); }
+#controls button:disabled { opacity: 0.45; cursor: default; }
+#controls button:disabled:hover { border-color: var(--panel-edge); background: #0e131b; }
 
 .brush-label {
   display: flex;
@@ -273,6 +275,26 @@ main {
   gap: 9px;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.speed-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.speed-controls button {
+  padding-left: 9px;
+  padding-right: 9px;
+}
+
+#speed-label {
+  min-width: 3.5ch;
+  text-align: center;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 #brush-size-value {

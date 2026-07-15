@@ -1,0 +1,13 @@
+{
+  "name": "sandfall",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A tiny falling-sand alchemy sandbox",
+  "scripts": {
+    "test": "node --test",
+    "build": "npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
