@@ -2,6 +2,9 @@
 
 A tiny falling-sand alchemy sandbox in a single canvas. No framework, no build step, just HTML/CSS/JS. Paint elements onto a wide 900x200 world, drop in little people, and watch it all interact via simple local rules. The world is a side-scrolling strip of regions, a village, a platforming climb, an open flying updraft, a frozen lake, a Game of Life garden, and a meadow, that you roam through with WASD (every pixel drawn at full size, no zoom, so Game of Life stays crisp).
 
+![The starting village at the left edge of the world, with wanderers milling around huts and trees](docs/screenshots/village-start.png)
+![The Game of Life garden further along the world, gliders and still lifes drifting above a small lake](docs/screenshots/life-garden-lake.png)
+
 It started as a weekend toy, one grid and a handful of local rules, and it kept sprouting things I wanted to watch. Two of them became the heart of it: Conway's Game of Life running quietly up in the sky, and the little people trying to make a life in the middle of all the chaos. Everything else is really just weather for them to live in.
 
 🌐 **Play it live:** [sandfall-delta.vercel.app](https://sandfall-delta.vercel.app/)
