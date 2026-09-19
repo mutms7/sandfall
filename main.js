@@ -11,7 +11,9 @@
 // a fixed 1:1 window that pans horizontally (WASD / drag / wheel) — no zoom, so
 // every pixel is always drawn at full size, which keeps Game of Life crisp.
 const W = 900, H = 200;
-const VIEW_W = 450, VIEW_H = 200;
+let VIEW_W = window.innerWidth <= 600 ? 300 : 450;
+const VIEW_H = 200;
+let panTool = false;
 const N = W * H;
 
 const E = {
@@ -29,19 +31,18 @@ const stamp = new Uint32Array(N);  // frame a cell last moved (skip double updat
 const lifeNext = new Uint8Array(N); // scratch buffer for the next GoL generation
 let frame = 0;
 
-// Simulation time is deliberately slower than the display refresh. Keeping a
-// fixed step makes the falling-sand rules and people move at the same speed on
-// every monitor, while the Life cadence below is expressed in elapsed time
-// instead of display frames.
+// One simulation clock drives materials, residents, held brushes, and Life.
+// At 1x, materials and residents update at 60 ticks/s; water flows at 30.
 const SIM_STEP_MS = 1000 / 60;
+const WATER_TICK_INTERVAL = 2;
 const LIFE_STEP_MS = 100;
-// Per-frame safety limits retain any unprocessed accumulator backlog. Thirty
-// world ticks cover 4× speed during a 10 FPS frame; excess backlog is retained.
-const MAX_WORLD_CATCH_UP_STEPS = 30;
-const MAX_LIFE_CATCH_UP_STEPS = 20;
-const MAX_LOGO_CATCH_UP_STEPS = 20;
-const SIM_SPEEDS = [0.5, 1, 2, 4];
-let simulationSpeedIndex = 1;
+// Discard time lost to browser throttling instead of replaying it as a burst.
+const MAX_FRAME_ELAPSED_MS = 100;
+const MAX_WORLD_CATCH_UP_STEPS = 24;
+const MAX_LIFE_CATCH_UP_STEPS = 4;
+const MAX_LOGO_CATCH_UP_STEPS = 24;
+const SIM_SPEEDS = [0.25, 0.5, 1, 2, 4];
+let simulationSpeedIndex = SIM_SPEEDS.indexOf(1);
 let lifeElapsedMs = 0;
 
 // lookup tables (arrays beat Sets in the hot loop); sized past the last id
@@ -271,14 +272,12 @@ function stepLife() {
 
 function advanceLifeElapsed(elapsedMs) {
   if (!(elapsedMs > 0)) return;
-  // Life follows elapsed wall-clock time while running. The page lifecycle
-  // handlers below discard time spent hidden; visible backlog is drained over
-  // later frames when a single frame exceeds the defensive work limit.
+  // The caller supplies scaled simulation time, not display-frame time.
   lifeElapsedMs += elapsedMs;
   let generations = 0;
-  while (lifeElapsedMs >= LIFE_STEP_MS && generations < MAX_LIFE_CATCH_UP_STEPS) {
+  while (lifeElapsedMs + 1e-7 >= LIFE_STEP_MS && generations < MAX_LIFE_CATCH_UP_STEPS) {
     stepLife();
-    lifeElapsedMs -= LIFE_STEP_MS;
+    lifeElapsedMs = Math.max(0, lifeElapsedMs - LIFE_STEP_MS);
     generations++;
   }
 }
@@ -293,7 +292,9 @@ function step() {
       if (stamp[i] === frame) continue;
       switch (cells[i]) {
         case E.SAND: updatePowder(x, y, i); break;
-        case E.WATER: updateLiquid(x, y, i, E.WATER, 5); break;
+        case E.WATER:
+          if (frame % WATER_TICK_INTERVAL === 0) updateLiquid(x, y, i, E.WATER, 5);
+          break;
         case E.OIL: updateLiquid(x, y, i, E.OIL, 2); break;
         case E.FIRE: updateFire(x, y, i); break;
         case E.SMOKE: updateGas(x, y, i, E.SMOKE); break;
@@ -1661,6 +1662,7 @@ function killAllCritters() { critters.length = 0; }
 const canvas = document.getElementById("world");
 canvas.width = VIEW_W;
 canvas.height = VIEW_H;
+canvas.style.setProperty("--view-aspect", VIEW_W / VIEW_H);
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
@@ -1676,8 +1678,8 @@ const img = worldCtx.createImageData(W, H);
 const px = img.data;
 
 const minimap = document.getElementById("minimap");
-minimap.width = 200;
-minimap.height = Math.round(200 * H / W);
+minimap.width = W;
+minimap.height = H;
 const minimapCtx = minimap.getContext("2d");
 minimapCtx.imageSmoothingEnabled = false;
 const viewInfo = document.getElementById("view-info");
@@ -1706,10 +1708,14 @@ const REGIONS = [
   [630, "frostmere"], [830, "the life gardens"], [W, "the meadow"],
 ];
 function updateViewInfo() {
-  const cx = cameraX;
-  let name = REGIONS[REGIONS.length - 1][1];
-  for (const [edge, label] of REGIONS) { if (cx < edge) { name = label; break; } }
-  viewInfo.textContent = name;
+  // The edges have their own names even when the camera cannot center on them.
+  const view = viewRect();
+  const cx = view.x === 0 ? 0 : view.x + VIEW_W >= W ? W - 1 : cameraX;
+  let region = REGIONS.findIndex(([edge]) => cx < edge);
+  if (region < 0) region = REGIONS.length - 1;
+  region = window.sandfallUI?.updateRegion(region) ?? region;
+  const label = document.body.classList.contains("in-tutorial") ? "The practice garden" : REGIONS[region][1];
+  if (viewInfo.textContent !== label) viewInfo.textContent = label;
 }
 
 function resetCamera() { cameraX = VIEW_W * 0.5; cameraY = H * 0.5; updateViewInfo(); }
@@ -1718,7 +1724,7 @@ function renderMinimap(view) {
   minimapCtx.clearRect(0, 0, minimap.width, minimap.height);
   minimapCtx.drawImage(worldBuffer, 0, 0, W, H, 0, 0, minimap.width, minimap.height);
   minimapCtx.strokeStyle = "rgba(255, 232, 175, 0.95)";
-  minimapCtx.lineWidth = 1;
+  minimapCtx.lineWidth = 3;
   minimapCtx.strokeRect(
     view.x / W * minimap.width + 0.5,
     view.y / H * minimap.height + 0.5,
@@ -1729,13 +1735,13 @@ function renderMinimap(view) {
 
 // [r, g, b, variation]
 const COLORS = [];
-COLORS[E.EMPTY] = [5, 6, 10, 0];
+COLORS[E.EMPTY] = [12, 24, 25, 0];
 COLORS[E.WALL] = [90, 95, 106, 10];
 COLORS[E.SAND] = [224, 176, 96, 26];
-COLORS[E.WATER] = [42, 108, 212, 18];
+COLORS[E.WATER] = [60, 135, 164, 13];
 COLORS[E.OIL] = [104, 78, 48, 12];
-COLORS[E.PLANT] = [62, 160, 78, 30];
-COLORS[E.STONE] = [138, 141, 148, 16];
+COLORS[E.PLANT] = [98, 160, 95, 16];
+COLORS[E.STONE] = [88, 111, 99, 7];
 COLORS[E.ACID] = [128, 222, 42, 24];
 COLORS[E.ICE] = [168, 216, 240, 14];
 COLORS[E.GLASS] = [172, 202, 208, 8];
@@ -1856,7 +1862,10 @@ function render() {
   for (let i = 0, p = 0; i < N; i++, p += 4) {
     const e = cells[i];
     let r, g, b;
-    if (e === E.FIRE) {
+    if (e === E.EMPTY) {
+      const y = (i / W) | 0;
+      r = 12 + y * 0.025; g = 24 + y * 0.04; b = 25 + y * 0.025;
+    } else if (e === E.FIRE) {
       const heat = Math.min(life[i] * 5, 160);
       r = 255; g = 90 + heat + (shade[i] & 31); b = 20 + (heat >> 2);
       if (g > 255) g = 255;
@@ -1972,8 +1981,10 @@ function stampPattern(cx, cy, coords) {
 
 canvas.addEventListener("pointerdown", (ev) => {
   ev.preventDefault();
+  if (!ev.isPrimary) return;
+  canvas.focus({ preventScroll: true });
   canvas.setPointerCapture(ev.pointerId);
-  if (ev.button === 1 || (ev.button === 0 && ev.shiftKey)) {
+  if (panTool || ev.button === 1 || (ev.button === 0 && ev.shiftKey)) {
     panning = true;
     panLastX = ev.clientX;
     panLastY = ev.clientY;
@@ -2001,7 +2012,7 @@ canvas.addEventListener("pointermove", (ev) => {
     panLastY = ev.clientY;
     return;
   }
-  if (!painting) return;
+  if (!ev.isPrimary || !painting) return;
   const [x, y] = canvasCoords(ev);
   if (strokeElement === PEOPLE) {
     peopleAccum += Math.hypot(x - lastX, y - lastY);
@@ -2023,6 +2034,8 @@ const endStroke = () => {
 };
 canvas.addEventListener("pointerup", endStroke);
 canvas.addEventListener("pointercancel", endStroke);
+canvas.addEventListener("lostpointercapture", endStroke);
+window.addEventListener("blur", endStroke);
 canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
 
 // While the brush is held still, keep laying down material at the cursor each
@@ -2030,6 +2043,8 @@ canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
 // burn off, rise, or fall away, instead of stopping the instant you hold still.
 function emitHeld() {
   if (!painting || panning || pastePattern) return;
+  // Emission runs before step() increments frame. Water pours at its flow rate.
+  if (strokeElement === E.WATER && (frame + 1) % WATER_TICK_INTERVAL !== 0) return;
   if (strokeElement === PEOPLE || strokeElement === CRITTERS) return; // these only drip along a drag
   if (strokeElement === ERASER) { removePeopleNear(lastX, lastY, brushRadius + 1); removeCrittersNear(lastX, lastY, brushRadius + 1); }
   stampBrush(lastX, lastY, strokeElement);
@@ -2037,6 +2052,7 @@ function emitHeld() {
 // The wheel scrolls the world sideways (no zoom). A vertical wheel maps to
 // horizontal travel, which is what a wide side-view wants.
 canvas.addEventListener("wheel", (ev) => {
+  if (ev.ctrlKey) return; // Preserve browser pinch-to-zoom.
   ev.preventDefault();
   const amount = (ev.deltaX || ev.deltaY);
   cameraX += Math.sign(amount) * 26;
@@ -2079,6 +2095,9 @@ for (const entry of PALETTE) {
   const { e, label, key, menu } = entry;
   const btn = document.createElement("button");
   btn.className = "element-btn";
+  btn.setAttribute("aria-label", label);
+  btn.setAttribute("aria-pressed", "false");
+  btn.dataset.element = e;
   const tail = menu
     ? `<span class="sub"></span><span class="caret">&#9662;</span>`
     : `<span class="key">${key}</span>`;
@@ -2093,83 +2112,23 @@ for (const entry of PALETTE) {
 }
 
 function highlightButton(e) {
-  for (const [id, btn] of buttons) btn.classList.toggle("selected", id === e);
+  for (const [id, btn] of buttons) {
+    btn.classList.toggle("selected", id === e);
+    btn.setAttribute("aria-pressed", String(id === e));
+  }
 }
 
 function selectElement(e) {
   currentElement = e;
+  panTool = false;
   if (e !== E.LIFE) pastePattern = null; // leaving life leaves preset-stamp mode
   highlightButton(e);
+  window.sandfallUI?.syncSelection();
 }
 
-// ---- popover ----
-
-let openPop = null, openBtn = null;
-
-function closeMenu() {
-  if (!openPop) return;
-  openPop.remove();
-  openPop = openBtn = null;
-  document.removeEventListener("pointerdown", onDocDown, true);
-}
-
-function onDocDown(ev) {
-  if (openPop && !openPop.contains(ev.target) && ev.target !== openBtn && !openBtn.contains(ev.target)) {
-    closeMenu();
-  }
-}
-
-function openMenu(btn, kind) {
-  if (openBtn === btn) { closeMenu(); return; } // toggle
-  closeMenu();
-  const items = kind === "life" ? LIFE_MENU : kind === "people" ? PEOPLE_MENU : CRITTER_MENU;
-  const heads = { life: "game of life", people: "kind of person", critters: "kind of critter" };
-  const pop = document.createElement("div");
-  pop.className = "popover";
-  pop.innerHTML = `<div class="popover-head">${heads[kind]}</div>`;
-  const chosenVal = kind === "life" ? currentLifeChoice : kind === "people" ? peopleType : critterType;
-  const killType = kind === "people" ? killPeopleOfType : kind === "critters" ? killCrittersOfType : null;
-  const killAll = kind === "people" ? killAllPeople : kind === "critters" ? killAllCritters : null;
-  for (const item of items) {
-    const row = document.createElement("div");
-    row.className = "menu-row";
-    const it = document.createElement("button");
-    it.className = "popover-item" + (item.value === chosenVal ? " chosen" : "");
-    it.innerHTML =
-      `<span class="dot" style="background:${item.color}"></span>` +
-      `<span class="p-text"><span class="p-name">${item.name}</span>` +
-      (item.desc ? `<span class="p-desc">${item.desc}</span>` : "") + `</span>`;
-    it.addEventListener("click", () => { item.pick(); closeMenu(); });
-    row.appendChild(it);
-    if (killType) {                                          // a skull to cull just this kind
-      const skull = document.createElement("button");
-      skull.className = "chip-kill";
-      skull.title = `Remove all ${item.name}s`;
-      skull.textContent = "☠";
-      skull.addEventListener("click", (ev) => { ev.stopPropagation(); killType(item.value); });
-      row.appendChild(skull);
-    }
-    pop.appendChild(row);
-  }
-  if (killAll) {                                             // one button to clear the whole species
-    const all = document.createElement("button");
-    all.className = "popover-item kill-all";
-    all.innerHTML = `<span class="dot" style="background:#e0483a"></span><span class="p-text"><span class="p-name">&#9760; kill all ${kind === "people" ? "people" : "critters"}</span></span>`;
-    all.addEventListener("click", () => { killAll(); closeMenu(); });
-    pop.appendChild(all);
-  }
-  document.body.appendChild(pop);
-  const r = btn.getBoundingClientRect();
-  const pw = pop.offsetWidth;
-  let left = r.left;
-  if (left + pw > window.innerWidth - 8) left = window.innerWidth - 8 - pw;
-  pop.style.left = `${Math.max(8, Math.round(left))}px`;
-  pop.style.top = `${Math.round(r.bottom + 6)}px`;
-  openPop = pop; openBtn = btn;
-  setTimeout(() => document.addEventListener("pointerdown", onDocDown, true), 0);
-}
-
-window.addEventListener("resize", closeMenu);
+// The tool library replaces floating menus; handles remain for canvas callers.
+function closeMenu() {}
+function openMenu(btn, kind) { window.sandfallUI?.openGroup(kind); }
 
 // ---- controls ----
 
@@ -2193,6 +2152,7 @@ function updateSpeedLabel() {
 }
 function setSimulationSpeed(nextIndex) {
   simulationSpeedIndex = Math.max(0, Math.min(SIM_SPEEDS.length - 1, nextIndex));
+  suspendTickClock();
   updateSpeedLabel();
 }
 function changeSimulationSpeed(direction) {
@@ -2202,14 +2162,18 @@ slowerBtn.addEventListener("click", () => changeSimulationSpeed(-1));
 fasterBtn.addEventListener("click", () => changeSimulationSpeed(1));
 updateSpeedLabel();
 function setPaused(p) {
+  if (paused !== p) suspendTickClock();
   paused = p;
   pauseBtn.classList.toggle("active", paused);
-  pauseBtn.innerHTML = paused ? "&#9654; resume" : "&#10074;&#10074; pause";
+  pauseBtn.textContent = paused ? "Play" : "Pause";
+  window.sandfallUI?.syncPlayback();
 }
 pauseBtn.addEventListener("click", () => setPaused(!paused));
 document.getElementById("btn-step").addEventListener("click", manualStep);
 document.getElementById("btn-overview").addEventListener("click", resetCamera);
-document.getElementById("btn-clear").addEventListener("click", clearWorld);
+document.getElementById("btn-clear").addEventListener("click", () => {
+  window.sandfallUI?.rememberWorld("World cleared"); clearWorld();
+});
 updateViewInfo();
 
 function clearWorld() {
@@ -2228,7 +2192,9 @@ function regenerateWorld() {
   clearWorld();
   seedWorld(); // uses fresh randomness, so every regen is a slightly new world
 }
-document.getElementById("btn-reset").addEventListener("click", regenerateWorld);
+document.getElementById("btn-reset").addEventListener("click", () => {
+  window.sandfallUI?.rememberWorld("A new world is growing"); regenerateWorld(); resetCamera();
+});
 
 // Save states: a name plus a full copy of the grid and everything living in it.
 // They persist to localStorage (run-length encoded, since the world is mostly
@@ -2265,7 +2231,7 @@ function snapshotState(name) {
     cells: cells.slice(), life: life.slice(), shade: shade.slice(),
     people: people.map((p) => structuredClone(p)),
     critters: critters.map((c) => structuredClone(c)),
-    frame, lifeElapsedMs,
+    frame, lifeElapsedMs, cameraX, cameraY,
   };
 }
 
@@ -2281,6 +2247,10 @@ function restoreState(s) {
   deaths.length = 0;
   frame = s.frame || 0;
   lifeElapsedMs = Number.isFinite(s.lifeElapsedMs) ? s.lifeElapsedMs : 0;
+  if (Number.isFinite(s.cameraX)) cameraX = s.cameraX;
+  if (Number.isFinite(s.cameraY)) cameraY = s.cameraY;
+  clampCamera();
+  endStroke();
 }
 
 // shade is per-cell random noise (no runs, so not worth storing); it re-rolls on load.
@@ -2289,10 +2259,11 @@ function persistSaves() {
     const payload = saveStates.map((s) => ({
       name: s.name, cells: rleEncode(s.cells), life: rleEncode(s.life),
       people: s.people, critters: s.critters, frame: s.frame,
-      lifeElapsedMs: s.lifeElapsedMs,
+      lifeElapsedMs: s.lifeElapsedMs, cameraX: s.cameraX, cameraY: s.cameraY,
     }));
     localStorage.setItem(SAVE_KEY, JSON.stringify(payload));
-  } catch (e) { /* private mode or over quota: keep them in memory for the session */ }
+    return true;
+  } catch (e) { return false; }
 }
 
 function loadPersistedSaves() {
@@ -2303,35 +2274,51 @@ function loadPersistedSaves() {
     for (const p of JSON.parse(raw)) {
       const cellsArr = new Uint8Array(N), lifeArr = new Uint8Array(N);
       rleDecode(p.cells, cellsArr); rleDecode(p.life, lifeArr);
-      saveStates.push({ name: p.name, cells: cellsArr, life: lifeArr, shade: null, people: p.people || [], critters: p.critters || [], frame: p.frame || 0, lifeElapsedMs: Number.isFinite(p.lifeElapsedMs) ? p.lifeElapsedMs : 0 });
+      saveStates.push({ name: p.name, cells: cellsArr, life: lifeArr, shade: null, people: p.people || [], critters: p.critters || [], frame: p.frame || 0, lifeElapsedMs: Number.isFinite(p.lifeElapsedMs) ? p.lifeElapsedMs : 0, cameraX: p.cameraX, cameraY: p.cameraY });
     }
   } catch (e) { /* corrupt payload: ignore */ }
 }
 
 function renderSaves() {
   savesEl.innerHTML = "";
-  if (!saveStates.length) { savesEl.innerHTML = `<span class="saves-empty">none yet</span>`; return; }
+  document.getElementById("save-capacity").textContent = `${saveStates.length} of ${MAX_SAVES} spaces used. Delete a saved world to make room when full.`;
+  document.getElementById("btn-save").disabled = saveStates.length >= MAX_SAVES;
+  if (!saveStates.length) { savesEl.innerHTML = `<p class="saves-empty">Nothing saved yet. Make something you want to come back to.</p>`; return; }
   saveStates.forEach((s, i) => {
     const chip = document.createElement("div");
     chip.className = "save-chip";
-    chip.innerHTML = `<button class="chip-load" title="Load this state">${escapeHtml(s.name)}</button><button class="chip-del" title="Delete this state">&times;</button>`;
-    chip.querySelector(".chip-load").addEventListener("click", () => restoreState(s));
-    chip.querySelector(".chip-del").addEventListener("click", () => { saveStates.splice(i, 1); renderSaves(); persistSaves(); });
+    chip.innerHTML = `<button class="chip-load" aria-label="Load ${escapeHtml(s.name)}">${escapeHtml(s.name)}</button><button class="chip-del" aria-label="Delete ${escapeHtml(s.name)}">&times;</button>`;
+    chip.querySelector(".chip-load").addEventListener("click", () => {
+      window.sandfallUI?.rememberWorld(`Loaded ${s.name}`);
+      restoreState(s);
+      document.getElementById("worlds-dialog").close();
+    });
+    chip.querySelector(".chip-del").addEventListener("click", () => {
+      saveStates.splice(i, 1); renderSaves();
+      const stored = persistSaves();
+      document.getElementById("save-feedback").textContent = stored ? `Deleted ${s.name}. Undo is available below.` : "Removed for this session. Browser storage is unavailable.";
+      window.sandfallUI?.notice(`Deleted ${s.name}`, () => {
+        if (saveStates.length >= MAX_SAVES) { window.sandfallUI?.notice("Free a save space before restoring this world."); return; }
+        saveStates.splice(Math.min(i, saveStates.length), 0, s); renderSaves(); persistSaves();
+      });
+    });
     savesEl.appendChild(chip);
   });
 }
 
 function saveCurrentState() {
-  const name = (saveNameInput.value || "").trim() || `state ${saveStates.length + 1}`;
+  if (saveStates.length >= MAX_SAVES) return;
+  const name = (saveNameInput.value || "").trim() || `World ${saveStates.length + 1}`;
   saveStates.push(snapshotState(name));
-  while (saveStates.length > MAX_SAVES) saveStates.shift(); // keep the newest few
   saveNameInput.value = "";
   renderSaves();
-  persistSaves();
+  const stored = persistSaves();
+  document.getElementById("save-undo").hidden = true;
+  window.sandfallUI?.notice(`Saved ${name}`);
+  document.getElementById("save-feedback").textContent = stored ? `Saved ${name} in this browser.` : "Saved for this session only. Browser storage is unavailable.";
 }
 
-document.getElementById("btn-save").addEventListener("click", saveCurrentState);
-saveNameInput.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); saveCurrentState(); } });
+document.getElementById("savebar").addEventListener("submit", (ev) => { ev.preventDefault(); saveCurrentState(); });
 
 loadPersistedSaves();
 renderSaves();
@@ -2340,8 +2327,8 @@ renderSaves();
 // motion is smooth and can combine (e.g. up-left) rather than stuttering.
 const panKeys = { w: false, a: false, s: false, d: false };
 
-function panCamera() {
-  const speed = 5;
+function panCamera(elapsedMs) {
+  const speed = 180 * elapsedMs / 1000;
   let dx = 0, dy = 0;
   if (panKeys.a) dx -= 1;
   if (panKeys.d) dx += 1;
@@ -2356,6 +2343,7 @@ function panCamera() {
 
 document.addEventListener("keydown", (ev) => {
   const target = ev.target;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey || document.querySelector("dialog[open]")) return;
   if (target instanceof HTMLElement && (
     target.matches("input, textarea, select, button, a, [contenteditable='true'], [role='button'], [role='textbox']")
     || target.isContentEditable
@@ -2371,7 +2359,11 @@ document.addEventListener("keydown", (ev) => {
   if (ev.key === "-") { ev.preventDefault(); changeSimulationSpeed(-1); return; }
   if (ev.key === "=" || ev.key === "+") { ev.preventDefault(); changeSimulationSpeed(1); return; }
   if (ev.key === "f" || ev.key === "F") { resetCamera(); return; }
-  if (ev.key === "c" || ev.key === "C") { clearWorld(); return; }
+  if (k === "h") { window.sandfallUI?.setPan(); return; }
+  if (k === "c") {
+    if (!document.body.classList.contains("in-tutorial")) { window.sandfallUI?.rememberWorld("World cleared"); clearWorld(); }
+    return;
+  }
   if (ev.key === "[") { brushSlider.value = String(Math.max(1, brushRadius - 1)); brushSlider.dispatchEvent(new Event("input")); return; }
   if (ev.key === "]") { brushSlider.value = String(Math.min(16, brushRadius + 1)); brushSlider.dispatchEvent(new Event("input")); return; }
   if (ev.key === "Escape") { closeMenu(); return; }
@@ -2908,16 +2900,20 @@ let logoAccumulator = 0;
 let lastTickTime = null;
 
 // A hidden/backgrounded page can pause RAF for an arbitrary amount of time.
-// Resetting the clock at lifecycle boundaries discards that gap without
-// throttling catch-up during ordinary visible, low-FPS rendering.
-function suspendTickClock() { lastTickTime = null; }
+// Never replay time spent away from the world or at a previous speed.
+function suspendTickClock() {
+  lastTickTime = null;
+  simulationAccumulator = 0;
+  logoAccumulator = 0;
+  lifeElapsedMs %= LIFE_STEP_MS;
+}
 document.addEventListener("visibilitychange", suspendTickClock);
 window.addEventListener("pagehide", suspendTickClock);
 window.addEventListener("pageshow", suspendTickClock);
 
 function tick(timestamp) {
   if (document.hidden) {
-    lastTickTime = null;
+    suspendTickClock();
     requestAnimationFrame(tick);
     return;
   }
@@ -2927,41 +2923,38 @@ function tick(timestamp) {
   const now = validNow ? candidateNow : 0;
   const elapsed = !validNow || lastTickTime === null || !Number.isFinite(lastTickTime) || now < lastTickTime
     ? 0
-    : now - lastTickTime;
+    : Math.min(now - lastTickTime, MAX_FRAME_ELAPSED_MS);
   lastTickTime = validNow ? now : null;
 
+  const simulationElapsed = elapsed * SIM_SPEEDS[simulationSpeedIndex];
   if (!paused) {
-    // Life uses the actual elapsed RAF time, independently of the fixed-step
-    // sand accumulator below; any visible backlog remains queued if this
-    // frame reaches the defensive work limit.
-    advanceLifeElapsed(elapsed);
-    simulationAccumulator += elapsed * SIM_SPEEDS[simulationSpeedIndex];
+    advanceLifeElapsed(simulationElapsed);
+    simulationAccumulator = Math.min(
+      simulationAccumulator + simulationElapsed,
+      SIM_STEP_MS * MAX_WORLD_CATCH_UP_STEPS,
+    );
     let worldUpdates = 0;
-    while (simulationAccumulator >= SIM_STEP_MS && worldUpdates < MAX_WORLD_CATCH_UP_STEPS) {
+    while (simulationAccumulator + 1e-7 >= SIM_STEP_MS && worldUpdates < MAX_WORLD_CATCH_UP_STEPS) {
+      emitHeld();
       step();
-      simulationAccumulator -= SIM_STEP_MS;
+      simulationAccumulator = Math.max(0, simulationAccumulator - SIM_STEP_MS);
       worldUpdates++;
     }
   } else {
-    // Do not accumulate time while paused; resuming should continue from the
-    // current state rather than replaying the time spent in the pause menu.
     simulationAccumulator = 0;
   }
-  // The logo is an independent miniature simulation: it keeps animating while
-  // the world is paused, advances on the same fixed 60Hz cadence, and uses
-  // the same speed multiplier as the ordinary world. Any visible backlog is
-  // retained for later frames rather than discarded.
-  logoAccumulator += elapsed * SIM_SPEEDS[simulationSpeedIndex];
+  // The decorative logo remains independent of Pause, but follows the speed.
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) logoAccumulator = 0;
+  else logoAccumulator = Math.min(logoAccumulator + simulationElapsed, SIM_STEP_MS * MAX_LOGO_CATCH_UP_STEPS);
   let logoUpdates = 0;
   while (logoAccumulator >= SIM_STEP_MS && logoUpdates < MAX_LOGO_CATCH_UP_STEPS) {
     stepLogo();
     logoAccumulator -= SIM_STEP_MS;
     logoUpdates++;
   }
-  emitHeld();
-  panCamera();
+  panCamera(elapsed);
   render();
-  renderLogo();
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) renderLogo();
   fpsFrames++;
   const fpsNow = performance.now();
   if (fpsNow - fpsLast >= 500) {
@@ -2973,4 +2966,8 @@ function tick(timestamp) {
   requestAnimationFrame(tick);
 }
 
+if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  for (const target of logoTargets) { target.y = target.ty; target.landed = true; }
+  renderLogo();
+}
 tick(performance.now());

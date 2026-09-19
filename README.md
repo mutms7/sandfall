@@ -1,6 +1,30 @@
 # Sandfall
 
-A tiny falling-sand alchemy sandbox in a single canvas. No framework, no build step, just HTML/CSS/JS. Paint elements onto a wide 900x200 world, drop in little people, and watch it all interact via simple local rules. The world is a side-scrolling strip of regions, a village, a platforming climb, an open flying updraft, a frozen lake, a Game of Life garden, and a meadow, that you roam through with WASD (every pixel drawn at full size, no zoom, so Game of Life stays crisp).
+![The redesigned Sandfall interface](docs/screenshots/terrarium-desktop.png)
+
+## Living terrarium interface
+
+The sandbox now puts the world first, with a forest palette, grouped tools, a navigable world map, and a hands-on tutorial. Everything still runs in plain HTML, CSS, and JavaScript.
+
+- **Desktop:** persistent ingredient library with materials, people, wildlife, and visual Life patterns.
+- **Phones and tablets:** the same library opens as a bottom drawer. Pick an ingredient and return directly to the canvas. A narrower phone camera keeps pixels readable.
+- **Explore:** drag with the hand tool, tap a named region, or drag the map. The map also supports arrow keys, Home, and End.
+- **Learn by doing:** the Tutorial button opens four short exercises in a separate practice garden. Try sand, water, people, and a glider. Exit or finish to restore your original world, tool, brush, speed, and pause state.
+- **Save a moment:** My worlds stores up to eight named worlds in this browser, including their camera position. A full library never silently replaces an earlier world. Storage failures are explained.
+- **Recover:** Clear, New world, loading a save, and removing residents offer a single recovery action. Deleted saves can also be restored before a subsequent change replaces the undo action.
+- **Keyboard:** visible focus, category arrow navigation, and a keyboard brush (focus the world, use arrows to position, Enter to paint). Dialogs trap focus and close with Escape. Reduced motion keeps the decorative logo still.
+
+The simulation's reactions, people, wildlife, patterns, and world regions remain intact. At normal speed, materials and residents run twice as fast as water. The speed controls scale that balance together. Stone, water, plants, and the sky have a calmer display palette.
+
+### Try the demo
+
+Open `index.html`, or run `python -m http.server 8123 --bind 127.0.0.1` in this folder and open `http://127.0.0.1:8123`. Choose **Tutorial** to start. Serving the folder gives browser saves a consistent origin.
+
+Run `npm test` for the existing static checks plus simulation checks for world restoration, save limits, persistence, Life timing, glider movement, and terrain-safe stamps.
+
+A tiny falling-sand alchemy sandbox in a single canvas. No framework, no build step, just HTML/CSS/JS. Paint elements onto a wide 900x200 world, drop in little people, and watch it all interact via simple local rules. The world is a side-scrolling strip of regions, a village, a platforming climb, an open flying updraft, a frozen lake, a Game of Life garden, and a meadow, that you roam through with the hand tool, A / D, or the map (every pixel drawn at full size, no zoom, so Game of Life stays crisp).
+
+The following reference screenshots show the original interface.
 
 ![The starting village at the left edge of the world, with wanderers milling around huts and trees](docs/screenshots/village-start.png)
 ![The Game of Life garden further along the world, gliders and still lifes drifting above a small lake](docs/screenshots/life-garden-lake.png)
@@ -23,37 +47,37 @@ python -m http.server 8123 -d .
 
 ## Elements
 
-| Element | Behavior |
-| --- | --- |
-| **sand** | Falls, piles into dunes, sinks through liquids. Lava fuses it into glass. |
-| **water** | Flows and levels out. Quenches fire (flashing into steam), dilutes acid, gets drunk by plants, frozen by ice. |
-| **wall** | Indestructible. Build basins, shelves, and mazes. |
-| **plant** | Static, but grows by converting adjacent water into more plant. Very flammable. |
-| **fire** | Flickers upward, short-lived. Spreads to oil and plants, melts ice, dies against water. Leaves smoke. |
-| **oil** | Floats on water, spreads slowly. Burns enthusiastically. |
-| **lava** | Viscous, glowing, spits sparks. Ignites what it touches, melts ice, turns sand to glass. Cools into stone on contact with water. |
-| **stone** | Solid natural rock. Static, so it forms stable cliffs, caves, and platforms. Dissolvable by acid; lava cooling in water leaves it behind. |
-| **acid** | Eats sand, stone, plants, oil, wood, and ice. Water dilutes it. Walls and glass resist it. |
-| **ice** | Static. Slowly freezes neighboring water, melts near fire and lava. |
-| **wood** | A placeable building material: static, solid to stand on, and the stuff trees and village huts are made of. The most flammable thing in the world, fire races along a beam and up a trunk. Acid dissolves it. |
-| **life** | Floats in place and evolves by [Conway's Game of Life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life). Births need empty air, so terrain, water and sand are walls that gliders shatter against. Fragile: fire, lava and acid destroy it. New cells glow bright cyan, aging to deep teal. |
-| tunnel supports | Diggers leave wooden roof and floor bracing behind them. It stops loose sand and stone from collapsing into a tunnel, but fire and acid can destroy it. |
-| smoke / steam / glass | Byproducts. Smoke dissipates, steam rises and sometimes condenses back into rain, glass is what lava leaves behind in sand. |
+| Element               | Behavior                                                                                                                                                                                                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **sand**              | Falls, piles into dunes, sinks through liquids. Lava fuses it into glass.                                                                                                                                                                                                                         |
+| **water**             | Flows and levels out. Quenches fire (flashing into steam), dilutes acid, gets drunk by plants, frozen by ice.                                                                                                                                                                                     |
+| **wall**              | Indestructible. Build basins, shelves, and mazes.                                                                                                                                                                                                                                                 |
+| **plant**             | Static, but grows by converting adjacent water into more plant. Very flammable.                                                                                                                                                                                                                   |
+| **fire**              | Flickers upward, short-lived. Spreads to oil and plants, melts ice, dies against water. Leaves smoke.                                                                                                                                                                                             |
+| **oil**               | Floats on water, spreads slowly. Burns enthusiastically.                                                                                                                                                                                                                                          |
+| **lava**              | Viscous, glowing, spits sparks. Ignites what it touches, melts ice, turns sand to glass. Cools into stone on contact with water.                                                                                                                                                                  |
+| **stone**             | Solid natural rock. Static, so it forms stable cliffs, caves, and platforms. Dissolvable by acid; lava cooling in water leaves it behind.                                                                                                                                                         |
+| **acid**              | Eats sand, stone, plants, oil, wood, and ice. Water dilutes it. Walls and glass resist it.                                                                                                                                                                                                        |
+| **ice**               | Static. Slowly freezes neighboring water, melts near fire and lava.                                                                                                                                                                                                                               |
+| **wood**              | A placeable building material: static, solid to stand on, and the stuff trees and village huts are made of. The most flammable thing in the world, fire races along a beam and up a trunk. Acid dissolves it.                                                                                     |
+| **life**              | Floats in place and evolves by [Conway's Game of Life](https://en.wikipedia.org/wiki/Conway%27s_Game_of_Life). Births need empty air, so terrain, water and sand are walls that gliders shatter against. Fragile: fire, lava and acid destroy it. New cells glow bright cyan, aging to deep teal. |
+| tunnel supports       | Diggers leave wooden roof and floor bracing behind them. It stops loose sand and stone from collapsing into a tunnel, but fire and acid can destroy it.                                                                                                                                           |
+| smoke / steam / glass | Byproducts. Smoke dissipates, steam rises and sometimes condenses back into rain, glass is what lava leaves behind in sand.                                                                                                                                                                       |
 
 ## People
 
-Two tools open a little dropdown menu right off the button itself: **life** and **people**. Click one and the menu appears anchored to it.
+Choose **People** in the ingredient library to see each kind and a short description. The **Life** tab shows visual previews of all patterns.
 
 The **people** aren't cells, they're small agents that walk the terrain, obey gravity, stand on solids (including Game of Life cells), track moving material beneath their feet, and manage health and oxygen. Deep water eventually drowns them, being completely buried suffocates them, and long drops hurt. Fatal falls slump a figure over, lava and fire burn it away, and drowning leaves a fading blue ghost.
 
-| Kind | Behavior |
-| --- | --- |
-| **wanderer** | The everyman. Alternates between a little walk or hop and standing around to watch the world. |
-| **adventurer** | Roams in bursts, vaulting walls and gaps, then pauses before setting off again. |
-| **platformer** | Chooses a genuinely lateral landing, solves a compact ballistic arc, and varies between several arc shapes. Recent platforms stay in memory so it does not bounce in the same two-stop loop. Its reach and launch power are roughly half the original long-jump version. |
-| **daredevil** | No longer jumps. It plans a safe coarse-grid route to a distant landing, then follows it with powered lift, partial gravity, changing speed, banking, and swooping. It replans around new obstacles; an actual high-speed impact is fatal. |
-| **builder** | Sometimes begins with a broad vertical shaft, braces its sides, then cuts wide horizontal branches. Other times it makes stepped diagonal tunnels, and occasionally it stays put to raise a tall, cross-braced support pillar like a mine shaft. Branches get continuous wooden platforms above and below. |
-| **swimmer** | Seeks out water and paddles at the surface. It can hold its breath much longer than everyone else, but can still drown. |
+| Kind           | Behavior                                                                                                                                                                                                                                                                                                   |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **wanderer**   | The everyman. Alternates between a little walk or hop and standing around to watch the world.                                                                                                                                                                                                              |
+| **adventurer** | Roams in bursts, vaulting walls and gaps, then pauses before setting off again.                                                                                                                                                                                                                            |
+| **platformer** | Chooses a genuinely lateral landing, solves a compact ballistic arc, and varies between several arc shapes. Recent platforms stay in memory so it does not bounce in the same two-stop loop. Its reach and launch power are roughly half the original long-jump version.                                   |
+| **daredevil**  | No longer jumps. It plans a safe coarse-grid route to a distant landing, then follows it with powered lift, partial gravity, changing speed, banking, and swooping. It replans around new obstacles; an actual high-speed impact is fatal.                                                                 |
+| **builder**    | Sometimes begins with a broad vertical shaft, braces its sides, then cuts wide horizontal branches. Other times it makes stepped diagonal tunnels, and occasionally it stays put to raise a tall, cross-braced support pillar like a mine shaft. Branches get continuous wooden platforms above and below. |
+| **swimmer**    | Seeks out water and paddles at the surface. It can hold its breath much longer than everyone else, but can still drown.                                                                                                                                                                                    |
 
 Ice has almost no stopping friction: a person can finish walking and keep sliding in the same direction until terrain, friction, or a new decision changes the motion. Ordinary ground brings them to a stop.
 
@@ -63,30 +87,30 @@ Pick a kind from the menu, then **click or drag** on the canvas to drop people (
 
 ## Critters
 
-The other species: small wildlife that just lives in the world, each kind with its own habitat and gait. Same deal as people, click the **critters** tool for a menu, then click or drag to release them.
+The other species: small wildlife that just lives in the world, each kind with its own habitat and gait. Choose **Wildlife** in the ingredient library, pick a species, then click or drag to release it.
 
-| Kind | Behavior |
-| --- | --- |
-| **bird** | Rides the open sky in easy undulating flight, turns at walls, and bolts away from fire. Every so often it spots a fish in the water below, stoops on it, and carries it off. |
-| **fish** | Schools inside water, roaming in 2D and keeping its distance from the others so they don't stack up. It stays strictly in the pool; strand it (pull the water away, or a bird drops it) and it suffocates in the air. |
-| **frog** | Hops along the shallows and shorelines, springs away when a person looms, and now and then flicks its tongue at a nearby firefly and swallows it. |
-| **firefly** | A drifting pulse of light that's quietly drawn to the nearest person, so a little swarm trails whoever wanders by. Water douses it, and frogs eat it. |
+| Kind        | Behavior                                                                                                                                                                                                              |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **bird**    | Rides the open sky in easy undulating flight, turns at walls, and bolts away from fire. Every so often it spots a fish in the water below, stoops on it, and carries it off.                                          |
+| **fish**    | Schools inside water, roaming in 2D and keeping its distance from the others so they don't stack up. It stays strictly in the pool; strand it (pull the water away, or a bird drops it) and it suffocates in the air. |
+| **frog**    | Hops along the shallows and shorelines, springs away when a person looms, and now and then flicks its tongue at a nearby firefly and swallows it.                                                                     |
+| **firefly** | A drifting pulse of light that's quietly drawn to the nearest person, so a little swarm trails whoever wanders by. Water douses it, and frogs eat it.                                                                 |
 
 Fire and lava burn any of them up; drowning, suffocation (bury one and it runs out of air), or being eaten make them fade away. They all get saved and restored with the world.
 
-Both the **people** and **critters** menus have a &#9760; skull beside each kind to remove just that kind, and a **kill all** row at the bottom, for when you've littered down a few too many.
+The **People** and **Wildlife** panels have a removal button beside each kind and a remove-all action at the bottom. Both offer undo.
 
 ## Controls
 
 - **Left-drag** paints the selected element or drops people, **right-drag** erases
-- **WASD** roams the map; **wheel** and **middle-drag** (or **Shift + left-drag**) also pan; **F** or **home** jumps back to the start
+- **A / D** roam the map; **H** selects the hand tool; **wheel** and **middle-drag** (or **Shift + left-drag**) also pan; **F** or **home** jumps back to the start
 - **1–0** select elements, **o** wood, **g** life, **p** people, **k** critters, **e** the eraser
-- Click **life**, **people**, or **critters** for a menu of variants (Game of Life patterns / kinds of person / kinds of critter)
+- Choose **Life**, **People**, or **Wildlife** in the library for patterns and species
 - Hold the brush still and it keeps emitting, so fire, water or sand pours from one spot
 - **[** and **]** shrink and grow the brush
-- **−** slows the simulation and **=** (or **+**) speeds it up; the rate steps through **0.5×, 1×, 2×, 4×** (Game of Life stays at 10 generations/sec)
+- **−** slows the simulation and **=** (or **+**) speeds it up; the rate steps through **0.25×, 0.5×, 1×, 2×, 4×** (materials, people, wildlife, held pouring, and Game of Life all follow this rate)
 - **Space** pauses, **.** advances one simulation tick, **regen** builds a fresh world, **c** clears it
-- **Save states** at the bottom: name the current world and store it (it persists across reloads); click a chip to jump back to it
+- **My worlds** at the top: name and save the current world (it persists across reloads); select its name to return to it
 - With a life **pattern** chosen, **click the canvas** to stamp it (as many times as you like). Picking "free paint" or any element leaves stamp mode.
 
 ### Life patterns
@@ -95,7 +119,7 @@ Spaceships (glider, lightweight spaceship) that travel, oscillators (toad, beaco
 
 ## Things worth trying
 
-- Roam the whole strip with **WASD** (or the minimap): **the village**, **the climbs**, **the updraft**, **frostmere**, **the life gardens**, and **the meadow**. The region name shows in the corner as you go.
+- Roam the whole strip with **A / D**, the hand tool, or the minimap: **the village**, **the climbs**, **the updraft**, **frostmere**, **the life gardens**, and **the meadow**. The region name shows in the corner as you go.
 - Sit in the **life gardens** and watch two Gosper guns cross fire over a pulsar, a pentadecathlon, and a drifting spaceship. Drop a wall to catch the gliders, or paint your own pattern into the open air.
 - Set a **village** hut on fire and watch the flame climb the timber. Wood is the most flammable thing in the world.
 - Take a torch to a tree: fire runs right up the trunk and into the canopy.
@@ -108,10 +132,10 @@ Spaceships (glider, lightweight spaceship) that travel, oscillators (toad, beaco
 
 ## How it works
 
-The world is a flat `Uint8Array`, one element id per cell, updated bottom-up at a base 60 ticks per second (adjustable with the speed controls). The scan direction alternates each row and tick to avoid directional bias, and a per-cell frame stamp prevents anything from moving twice in one tick. Powders fall and slide, liquids disperse sideways with per-element viscosity, gases rise and decay, and everything else is neighborhood reactions with small probabilities. Rendering writes RGBA directly into a full-world `ImageData`, then blits the visible slice **1:1** into a fixed camera window (no scaling, so no cell is ever dropped, which keeps Game of Life exact) and draws a small minimap with the camera rectangle so the 900x200 world stays easy to navigate.
+The world is a flat `Uint8Array`, one element id per cell, updated bottom-up at a base 60 ticks per second (water updates every other tick) (adjustable with the speed controls). The scan direction alternates each row and tick to avoid directional bias, and a per-cell frame stamp prevents anything from moving twice in one tick. Powders fall and slide, liquids disperse sideways with per-element viscosity, gases rise and decay, and everything else is neighborhood reactions with small probabilities. Rendering writes RGBA directly into a full-world `ImageData`, then blits the visible slice **1:1** into a fixed camera window (no scaling, so no cell is ever dropped, which keeps Game of Life exact) and draws a small minimap with the camera rectangle so the 900x200 world stays easy to navigate.
 
-The `life` element is the exception to the in-place scan: Conway's Game of Life demands a *simultaneous* update, so it runs as its own pass at 10 generations per second based on elapsed time rather than display frames, counting live neighbors from the current grid into a scratch buffer and then applying births and deaths all at once. It reuses the per-cell `life` byte as a cell's age, which drives the color gradient from newborn white-cyan to aged teal.
+The `life` element is the exception to the in-place scan: Conway's Game of Life demands a _simultaneous_ update, so it runs as its own pass at 10 generations per second at 1×, using the same scaled simulation clock as the world rather than display frames, counting live neighbors from the current grid into a scratch buffer and then applying births and deaths all at once. It reuses the per-cell `life` byte as a cell's age, which drives the color gradient from newborn white-cyan to aged teal.
 
-The **people** are the other exception. They're not cells at all, just a list of little agents with floating-point positions, velocities, oxygen, health, support tracking, and role-specific state. Each frame they read the grid, make a decision, run swept collision so jumps and flights cannot skip thin platforms, react to hazards, and get painted directly over the finished world buffer. Platformers rank nearby destinations with recent-platform memory and select among multiple compact ballistic solutions. Daredevils run a coarse A* search, retain short waypoints, and use inertial steering plus gravity to curve through the safe corridor; the same swept check turns fast impacts into deaths. Builders alternate broad supported shafts, wider branches, stepped diagonal paths, and occasional cross-braced pillars; ordinary shaft framing stops once it leaves material so only pillar projects rise into open air. Short-lived death records render the cause-specific animations after an agent is removed.
+The **people** are the other exception. They're not cells at all, just a list of little agents with floating-point positions, velocities, oxygen, health, support tracking, and role-specific state. Each frame they read the grid, make a decision, run swept collision so jumps and flights cannot skip thin platforms, react to hazards, and get painted directly over the finished world buffer. Platformers rank nearby destinations with recent-platform memory and select among multiple compact ballistic solutions. Daredevils run a coarse A\* search, retain short waypoints, and use inertial steering plus gravity to curve through the safe corridor; the same swept check turns fast impacts into deaths. Builders alternate broad supported shafts, wider branches, stepped diagonal paths, and occasional cross-braced pillars; ordinary shaft framing stops once it leaves material so only pillar projects rise into open air. Short-lived death records render the cause-specific animations after an agent is removed.
 
 The **logo** is a completely separate miniature falling-sand sim. A 5x7 bitmap font marks out which pixels each letter needs; every one of those becomes a grain that rains down into place, colored and shimmering by whichever ingredient that letter is made of. Once the whole word has landed it holds for a few seconds, then the grains let go and fall away, and it rebuilds itself, forever.

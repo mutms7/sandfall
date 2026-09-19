@@ -1,73 +1,470 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sandfall — a tiny alchemy sandbox</title>
-  <meta name="description" content="A tiny falling-sand alchemy sandbox in a single canvas. Paint elements, spawn little people, watch it all interact." />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=3" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='2' y='10' width='12' height='4' fill='%23e0b060'/><rect x='7' y='3' width='2' height='2' fill='%23e0b060'/><rect x='6' y='6' width='4' height='3' fill='%23e0b060'/></svg>" />
-</head>
-<body>
-  <header>
-    <h1 class="sr-only">SANDFALL</h1>
-    <canvas id="logo" role="img" aria-label="SANDFALL"></canvas>
-    <p class="tagline">a tiny alchemy sandbox &mdash; paint the elements, spawn a few people, then let it all fight</p>
-  </header>
-
-  <main>
-    <div id="toolbar">
-      <div id="palette"></div>
-    </div>
-
-    <div id="stage">
-      <canvas id="world"></canvas>
-      <canvas id="minimap" aria-hidden="true"></canvas>
-      <div id="hud">
-        <span id="fps"></span>
-        <span id="hint">left-drag paint &middot; right-drag erase &middot; <b>WASD</b>/drag/wheel to roam &middot; <b>F</b> home &middot; [ ] brush</span>
-        <span id="view-info"></span>
-        <span id="pop-count"></span>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#10201e" />
+    <title>Sandfall | A small world, all yours</title>
+    <meta
+      name="description"
+      content="A living pixel sandbox. Pour sand, grow a garden, and give a tiny world a life of its own. Includes a hands-on tutorial."
+    />
+    <link rel="stylesheet" href="style.css?v=4" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231a2c27'/%3E%3Cpath d='M7 24h18v-4H7zm5-7h8v-4h-8zm2-7h4V6h-4z' fill='%23ebcc91'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">Skip to sandbox</a>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="brand">
+          <h1 class="sr-only">Sandfall</h1>
+          <canvas id="logo" role="img" aria-label="Sandfall"></canvas
+          ><span class="brand-caption">A LIVING SANDBOX</span>
+        </div>
+        <nav class="header-actions" aria-label="Sandbox resources">
+          <button id="btn-tutorial" class="soft-button">
+            <span data-icon="sprout"></span><span>Tutorial</span></button
+          ><button id="btn-worlds">
+            <span data-icon="bookmark"></span><span>My worlds</span></button
+          ><button
+            id="btn-help"
+            class="icon-button"
+            aria-label="Help and keyboard shortcuts"
+          >
+            <span data-icon="help"></span>
+          </button>
+        </nav>
+      </header>
+      <div class="intro">
+        <div>
+          <p class="eyebrow">A LITTLE CURIOSITY GOES A LONG WAY</p>
+          <h2>A small world.<span> All yours.</span></h2>
+        </div>
+        <p>Pour a little sand. Plant something.<br />See what happens next.</p>
       </div>
+      <main id="workspace" tabindex="-1">
+        <div class="world-column">
+          <section
+            id="tutorial"
+            class="tutorial"
+            aria-label="Hands-on tutorial"
+            hidden
+          >
+            <div class="tutorial-copy" aria-live="polite">
+              <span id="tutorial-progress" class="eyebrow"></span>
+              <h3 id="tutorial-title"></h3>
+              <p id="tutorial-description"></p>
+            </div>
+            <div class="tutorial-actions">
+              <span id="tutorial-result" role="status"></span
+              ><button id="tutorial-next" class="primary">Next</button
+              ><button id="tutorial-skip" class="text-button">Skip step</button
+              ><button
+                id="tutorial-exit"
+                class="icon-button"
+                aria-label="Exit tutorial and restore my world"
+              >
+                <span data-icon="close"></span>
+              </button>
+            </div>
+          </section>
+          <section class="terrarium" aria-label="Your world">
+            <div class="world-heading">
+              <div class="location">
+                <span data-icon="compass"></span>
+                <h3 id="view-info">The village</h3>
+              </div>
+              <div class="world-status">
+                <span id="run-status" class="running">Living</span
+                ><span id="pop-count"></span>
+              </div>
+            </div>
+            <div id="stage">
+              <canvas
+                id="world"
+                tabindex="0"
+                aria-label="Interactive world. Drag to paint. Choose Pan to move. Arrow keys move the keyboard brush, Enter paints, and A or D moves the view."
+                aria-describedby="canvas-hint"
+              ></canvas>
+              <div id="brush-preview" aria-hidden="true"></div>
+              <span class="stage-caption" aria-hidden="true"
+                >MAKE ROOM FOR A LITTLE WONDER</span
+              >
+            </div>
+            <button id="btn-library" aria-haspopup="dialog">
+              <span id="mobile-swatch"></span
+              ><span id="mobile-tool-name">Sand</span
+              ><span class="mobile-tool-hint">Choose an ingredient</span
+              ><span data-icon="arrow"></span>
+            </button>
+            <div id="controls">
+              <div
+                class="editing-controls"
+                role="group"
+                aria-label="Editing tools"
+              >
+                <button
+                  id="btn-paint"
+                  class="icon-button active"
+                  aria-label="Paint"
+                  title="Paint"
+                  aria-pressed="true"
+                >
+                  <span data-icon="brush"></span></button
+                ><button
+                  id="btn-pan"
+                  class="icon-button"
+                  aria-label="Pan world"
+                  title="Pan world (H)"
+                  aria-pressed="false"
+                >
+                  <span data-icon="hand"></span></button
+                ><button
+                  id="btn-erase"
+                  class="icon-button"
+                  aria-label="Erase"
+                  title="Erase (E)"
+                  aria-pressed="false"
+                >
+                  <span data-icon="eraser"></span></button
+                ><span class="control-divider"></span
+                ><label class="brush-label" for="brush-size"
+                  >Size
+                  <input
+                    type="range"
+                    id="brush-size"
+                    min="1"
+                    max="16"
+                    value="4"
+                  /><output id="brush-size-value" for="brush-size"
+                    >4</output
+                  ></label
+                >
+              </div>
+              <div class="playback">
+                <button
+                  id="btn-pause"
+                  class="play-button"
+                  title="Pause or resume (Space)"
+                >
+                  Pause</button
+                ><button
+                  id="btn-step"
+                  class="icon-button"
+                  aria-label="Advance one tick"
+                  title="Advance one tick (.)"
+                >
+                  <span data-icon="step"></span>
+                </button>
+                <div
+                  class="speed-controls"
+                  role="group"
+                  aria-label="Simulation speed"
+                >
+                  <button
+                    id="btn-slower"
+                    class="icon-button"
+                    aria-label="Slow simulation"
+                    title="Slow simulation (-)"
+                  >
+                    <span data-icon="minus"></span></button
+                  ><span id="speed-label" aria-live="polite">1×</span
+                  ><button
+                    id="btn-faster"
+                    class="icon-button"
+                    aria-label="Speed up simulation"
+                    title="Speed up simulation (+)"
+                  >
+                    <span data-icon="plus"></span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+          <div id="hud">
+            <p id="canvas-hint">
+              Drag to paint <span>·</span> Pan to explore <span>·</span> Space
+              to pause
+            </p>
+            <span id="fps"></span>
+          </div>
+          <section class="atlas" aria-label="Explore the world">
+            <div class="atlas-heading">
+              <span class="eyebrow">A WORLD TO WANDER</span
+              ><button
+                id="btn-overview"
+                class="text-button"
+                title="Return to the village (F)"
+              >
+                <span data-icon="home"></span>Back home
+              </button>
+            </div>
+            <canvas
+              id="minimap"
+              role="slider"
+              tabindex="0"
+              aria-label="World map position"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+            ></canvas>
+            <nav id="regions" aria-label="World regions"></nav>
+          </section>
+          <div class="world-footer">
+            <p>No score. No hurry. Just a little cause and effect.</p>
+            <div>
+              <button id="btn-reset" class="text-button">
+                <span data-icon="refresh"></span>New world</button
+              ><button id="btn-clear" class="text-button">Clear</button>
+            </div>
+          </div>
+        </div>
+        <aside id="toolbox" aria-label="Tool library">
+          <div class="toolbox-heading">
+            <span id="ingredients-title" class="eyebrow">THE INGREDIENTS</span
+            ><span data-icon="sparkles"></span
+            ><button
+              id="close-library"
+              class="icon-button"
+              aria-label="Close ingredient library"
+            >
+              <span data-icon="close"></span>
+            </button>
+          </div>
+          <div class="tool-tabs" role="tablist" aria-label="Tool categories">
+            <button
+              id="tab-materials"
+              role="tab"
+              aria-selected="true"
+              aria-controls="panel-materials"
+              data-group="materials"
+            >
+              Materials</button
+            ><button
+              id="tab-people"
+              role="tab"
+              aria-selected="false"
+              aria-controls="panel-people"
+              tabindex="-1"
+              data-group="people"
+            >
+              People</button
+            ><button
+              id="tab-critters"
+              role="tab"
+              aria-selected="false"
+              aria-controls="panel-critters"
+              tabindex="-1"
+              data-group="critters"
+            >
+              Wildlife</button
+            ><button
+              id="tab-life"
+              role="tab"
+              aria-selected="false"
+              aria-controls="panel-life"
+              tabindex="-1"
+              data-group="life"
+            >
+              Life
+            </button>
+          </div>
+          <div
+            id="panel-materials"
+            role="tabpanel"
+            aria-labelledby="tab-materials"
+          >
+            <div id="palette"></div>
+          </div>
+          <div
+            id="panel-people"
+            role="tabpanel"
+            aria-labelledby="tab-people"
+            hidden
+          >
+            <div id="people-options" class="choice-list"></div>
+            <button id="clear-people" class="text-button remove-all">
+              Remove all people
+            </button>
+          </div>
+          <div
+            id="panel-critters"
+            role="tabpanel"
+            aria-labelledby="tab-critters"
+            hidden
+          >
+            <div id="critter-options" class="choice-list"></div>
+            <button id="clear-critters" class="text-button remove-all">
+              Remove all wildlife
+            </button>
+          </div>
+          <div
+            id="panel-life"
+            role="tabpanel"
+            aria-labelledby="tab-life"
+            hidden
+          >
+            <p class="panel-note">
+              Conway's Game of Life. Choose a pattern, then place it in open
+              sky.
+            </p>
+            <div id="life-options" class="pattern-list"></div>
+          </div>
+          <section class="field-note" aria-label="Selected tool">
+            <div class="field-note-top">
+              <span id="selected-swatch"></span>
+              <h3 id="selected-name">Sand</h3>
+              <span id="selected-kind">MATERIAL</span>
+            </div>
+            <p id="selected-description"></p>
+            <div id="selected-interaction"></div>
+          </section>
+          <button id="tutorial-invite" class="tutorial-invite">
+            <span data-icon="sprout"></span
+            ><span
+              ><strong>A little help getting started?</strong
+              ><small>Try the hands-on tutorial</small></span
+            ><span data-icon="arrow"></span>
+          </button>
+        </aside>
+      </main>
+      <footer class="app-footer">
+        <span
+          >SANDFALL <span class="footer-dot">·</span> A world in the
+          making</span
+        ><a
+          href="https://github.com/mutms7/Sandfall"
+          target="_blank"
+          rel="noreferrer"
+          >Open source <span aria-hidden="true">↗</span></a
+        >
+      </footer>
     </div>
-
-    <div id="savebar">
-      <span class="savebar-label">save states</span>
-      <input id="save-name" type="text" placeholder="name this state&hellip;" maxlength="24" />
-      <button id="btn-save" title="Save the current world under this name">&#43; save</button>
+    <dialog id="tools-dialog" aria-labelledby="ingredients-title"></dialog>
+    <dialog id="worlds-dialog" aria-labelledby="worlds-title">
+      <div class="dialog-heading">
+        <div>
+          <span class="eyebrow">KEEP A LITTLE WORLD</span>
+          <h2 id="worlds-title">My worlds</h2>
+        </div>
+        <button
+          class="icon-button dialog-close"
+          aria-label="Close saved worlds"
+        >
+          <span data-icon="close"></span>
+        </button>
+      </div>
+      <p class="dialog-intro">
+        Save a moment to come back to. Worlds stay in this browser.
+      </p>
+      <form id="savebar">
+        <label for="save-name">World name</label>
+        <div class="save-form-row">
+          <input
+            id="save-name"
+            type="text"
+            placeholder="A quiet afternoon"
+            maxlength="24"
+          /><button id="btn-save" class="primary" type="submit">
+            Save world
+          </button>
+        </div>
+      </form>
+      <p id="save-capacity" class="panel-note"></p>
       <div id="saves"></div>
-    </div>
-
-    <div id="controls">
-      <label class="brush-label">
-        <span>brush</span>
-        <input type="range" id="brush-size" min="1" max="16" value="4" />
-        <span id="brush-size-value">4</span>
-      </label>
-      <div class="speed-controls" role="group" aria-label="Simulation speed">
-        <button id="btn-slower" title="Slow simulation (-)">&#8722; slower</button>
-        <span id="speed-label" aria-live="polite">1&#215;</span>
-        <button id="btn-faster" title="Speed up simulation (= or +)">faster &#43;</button>
+      <p id="save-feedback" role="status"></p>
+      <button id="save-undo" class="text-button" hidden>Undo deletion</button>
+    </dialog>
+    <dialog id="help-dialog" aria-labelledby="help-title">
+      <div class="dialog-heading">
+        <div>
+          <span class="eyebrow">A FIELD GUIDE</span>
+          <h2 id="help-title">Make yourself at home.</h2>
+        </div>
+        <button class="icon-button dialog-close" aria-label="Close help">
+          <span data-icon="close"></span>
+        </button>
       </div>
-      <button id="btn-pause" title="Pause / resume (Space)">&#10074;&#10074; pause</button>
-      <button id="btn-step" title="Advance one simulation tick (.)">step</button>
-      <button id="btn-overview" title="Jump back to the start (F)">&#8962; home</button>
-      <button id="btn-reset" title="Regenerate a fresh world">&#10227; regen</button>
-      <button id="btn-clear" title="Clear the world (C)">clear</button>
+      <p class="dialog-intro">
+        Choose an ingredient, then draw in the world. Materials react, people
+        find their own way, and nothing needs a score.
+      </p>
+      <div class="help-grid">
+        <div>
+          <h3>Move around</h3>
+          <p>
+            Choose the hand tool and drag, tap a region, or drag the world map.
+            A mouse wheel and A / D work too.
+          </p>
+        </div>
+        <div>
+          <h3>Change things</h3>
+          <p>
+            Hold to pour materials. Drag to add people or wildlife. Use the
+            eraser, or right-drag, to make space.
+          </p>
+        </div>
+        <div>
+          <h3>Take your time</h3>
+          <p>
+            Pause to build, then watch it unfold. Step advances one tick. Speed
+            controls materials, people, wildlife, and Life patterns together.
+          </p>
+        </div>
+        <div>
+          <h3>Keep a world</h3>
+          <p>
+            Save up to eight worlds here. Clear, New world, and removing
+            creatures offer an undo until your next world change.
+          </p>
+        </div>
+      </div>
+      <details>
+        <summary>Keyboard shortcuts</summary>
+        <dl class="shortcuts">
+          <dt>1–0, O</dt>
+          <dd>Materials</dd>
+          <dt>P / K / G</dt>
+          <dd>People / wildlife / Life</dd>
+          <dt>H / E</dt>
+          <dd>Pan / erase</dd>
+          <dt>A / D / F</dt>
+          <dd>Move left / right / home</dd>
+          <dt>Space / .</dt>
+          <dd>Pause / step</dd>
+          <dt>[ / ]</dt>
+          <dd>Brush size</dd>
+          <dt>− / +</dt>
+          <dd>Simulation speed</dd>
+          <dt>C</dt>
+          <dd>Clear world (with undo)</dd>
+          <dt>Arrows / Enter</dt>
+          <dd>Move / use keyboard brush while world is focused</dd>
+        </dl>
+      </details>
+      <button id="help-tutorial" class="primary">Try the tutorial</button>
+    </dialog>
+    <div id="notice" class="notice" hidden>
+      <span id="notice-text" role="status"></span
+      ><button id="notice-undo">Undo</button
+      ><button
+        id="notice-close"
+        class="icon-button"
+        aria-label="Dismiss message"
+      >
+        <span data-icon="close"></span>
+      </button>
     </div>
-  </main>
-
-  <footer>
-    <p>
-      water quenches fire &middot; oil floats and burns &middot; lava turns sand to glass and cools to stone &middot;
-      plants drink water and grow &middot; acid eats almost everything &middot; ice creeps across water &middot;
-      life obeys Conway&rsquo;s rules &middot; people breathe, bruise, slide, ride, dig, leap, and sometimes fly
-    </p>
-  </footer>
-
-  <script src="main.js?v=3"></script>
-</body>
+    <script src="main.js?v=6"></script>
+    <script src="ui.js?v=5"></script>
+  </body>
 </html>
