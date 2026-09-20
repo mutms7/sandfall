@@ -127,6 +127,27 @@ test("a glider moves one cell diagonally in four Life generations", () => {
   );
 });
 
+test("Life survives ordinary materials and can grow through them", () => {
+  const run = sandbox();
+  assert.equal(
+    run(`
+      clearWorld();
+      setCell(idx(50, 50), E.LIFE);
+      setCell(idx(51, 50), E.LIFE);
+      setCell(idx(52, 50), E.LIFE);
+      setCell(idx(51, 49), E.WATER);
+      stepLife();
+      const grewThroughWater = cellAt(51, 49) === E.LIFE;
+
+      setCell(idx(70, 70), E.LIFE);
+      brushRadius = 0;
+      stampBrush(70, 70, E.STONE);
+      grewThroughWater && cellAt(70, 70) === E.LIFE;
+    `),
+    true,
+  );
+});
+
 test("speed scales world, Life and held pouring together at every display refresh rate", () => {
   const run = sandbox();
   run(`

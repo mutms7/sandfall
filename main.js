@@ -56,6 +56,14 @@ const DISSOLVES = new Uint8Array(32); // what acid can eat
 DISSOLVES[E.SAND] = DISSOLVES[E.STONE] = DISSOLVES[E.PLANT] =
   DISSOLVES[E.OIL] = DISSOLVES[E.ICE] = DISSOLVES[E.LIFE] =
   DISSOLVES[E.SUPPORT] = DISSOLVES[E.WOOD] = 1;
+// Life can reclaim ordinary material when a new cell is born. This keeps
+// patterns viable in a busy sandbox, while fire, lava, acid, smoke, and steam
+// still remain destructive boundaries.
+const LIFE_FRIENDLY = new Uint8Array(32);
+LIFE_FRIENDLY[E.EMPTY] = LIFE_FRIENDLY[E.WALL] = LIFE_FRIENDLY[E.SAND] =
+  LIFE_FRIENDLY[E.WATER] = LIFE_FRIENDLY[E.OIL] = LIFE_FRIENDLY[E.PLANT] =
+  LIFE_FRIENDLY[E.STONE] = LIFE_FRIENDLY[E.ICE] = LIFE_FRIENDLY[E.GLASS] =
+  LIFE_FRIENDLY[E.SUPPORT] = LIFE_FRIENDLY[E.WOOD] = 1;
 // what the people can stand on / bump into
 const SOLID_P = new Uint8Array(32);
 SOLID_P[E.WALL] = SOLID_P[E.SAND] = SOLID_P[E.STONE] =
@@ -241,8 +249,9 @@ function updateIce(x, y, i) {
 }
 
 // Conway's Game of Life, run as one simultaneous generation from a snapshot.
-// LIFE is the only "alive" element; births land only in empty air, so terrain,
-// water and sand form walls that gliders shatter against. life[] doubles as age.
+// LIFE is the only "alive" element. Births can reclaim ordinary material, so
+// patterns remain healthy when sand, water, or terrain brush against them.
+// life[] doubles as age.
 function stepLife() {
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
@@ -255,8 +264,8 @@ function stepLife() {
       }
       const c = cells[i];
       if (c === E.LIFE) lifeNext[i] = (n === 2 || n === 3) ? 1 : 0;
-      else if (c === E.EMPTY) lifeNext[i] = (n === 3) ? 1 : 0;
-      else lifeNext[i] = 0; // occupied by matter: no room to be born
+      else if (LIFE_FRIENDLY[c]) lifeNext[i] = (n === 3) ? 1 : 0;
+      else lifeNext[i] = 0; // fire, lava, acid, smoke, and steam block births
     }
   }
   for (let i = 0; i < N; i++) {
@@ -1919,7 +1928,7 @@ function stampBrush(cx, cy, elem) {
       if (elem === ERASER) {
         if (t !== E.EMPTY) setCell(i, E.EMPTY);
       } else if (elem === E.WALL || elem === E.PLANT || elem === E.ICE || elem === E.STONE || elem === E.WOOD) {
-        if (t !== elem) setCell(i, elem);
+        if (t !== elem && t !== E.LIFE) setCell(i, elem);
       } else if (elem === E.LIFE) {
         if (t === E.EMPTY) setCell(i, E.LIFE); // seed into open air only
       } else if (elem === E.FIRE) {
