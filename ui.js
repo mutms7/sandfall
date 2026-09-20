@@ -145,12 +145,7 @@
   for (const e of [PEOPLE, CRITTERS, ERASER]) buttons.get(e).remove();
   for (const [e, button] of buttons) {
     button.title = `${button.getAttribute("aria-label")} (${PALETTE.find((p) => p.e === e).key.toUpperCase()})`;
-    if (e === E.WATER)
-      button.querySelector(".swatch").style.background = "#69aec8";
-    if (e === E.PLANT)
-      button.querySelector(".swatch").style.background = "#83b476";
-    if (e === E.WALL)
-      button.querySelector(".swatch").style.background = "#99a3a1";
+
   }
 
   function showGroup(group, focus = false) {
@@ -299,13 +294,13 @@
     }
     $("mobile-tool-name").textContent = cap(name);
     $("mobile-swatch").style.background =
-      panTool || currentElement === ERASER ? "#adbdaf" : SWATCH[currentElement];
+      panTool || currentElement === ERASER ? "#a4adbd" : SWATCH[currentElement];
     $("selected-name").textContent = name;
     $("selected-kind").textContent = kind;
     $("selected-description").textContent = description;
     $("selected-interaction").textContent = interaction;
     $("selected-swatch").style.background =
-      panTool || currentElement === ERASER ? "#adbdaf" : SWATCH[currentElement];
+      panTool || currentElement === ERASER ? "#a4adbd" : SWATCH[currentElement];
     for (const [id, active] of [
       ["btn-paint", !panTool && currentElement !== ERASER],
       ["btn-pan", panTool],

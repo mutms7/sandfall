@@ -2,7 +2,7 @@
 
 The subject is a living pixel terrarium for curious people. The main job is to experiment with the world without hunting for tools.
 
-Palette: forest #10201e, moss surface #1a2c27, fern border #3d5348, parchment text #edf1df, sage secondary #adbdaf, sand accent #ebcc91. Material colors supply the brighter accents.
+Palette: original charcoal #0b0d12, slate surface #161a22, slate border #384354, cool text #dfe4ec, secondary text #a4adbd, amber accent #e0b060. Muted blue #9bb9db highlights status and secondary actions. Material colors supply the brighter accents.
 Type: Bricolage Grotesque for short headings; DM Sans for controls and prose; JetBrains Mono for shortcuts and data.
 Signature: a living landscape framed like a terrarium, with a full-width live world map beneath it. The original material-built logo stays.
 

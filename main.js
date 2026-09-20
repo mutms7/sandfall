@@ -1735,13 +1735,13 @@ function renderMinimap(view) {
 
 // [r, g, b, variation]
 const COLORS = [];
-COLORS[E.EMPTY] = [12, 24, 25, 0];
+COLORS[E.EMPTY] = [5, 6, 10, 0];
 COLORS[E.WALL] = [90, 95, 106, 10];
 COLORS[E.SAND] = [224, 176, 96, 26];
-COLORS[E.WATER] = [60, 135, 164, 13];
+COLORS[E.WATER] = [42, 108, 212, 18];
 COLORS[E.OIL] = [104, 78, 48, 12];
-COLORS[E.PLANT] = [98, 160, 95, 16];
-COLORS[E.STONE] = [88, 111, 99, 7];
+COLORS[E.PLANT] = [62, 160, 78, 30];
+COLORS[E.STONE] = [138, 141, 148, 16];
 COLORS[E.ACID] = [128, 222, 42, 24];
 COLORS[E.ICE] = [168, 216, 240, 14];
 COLORS[E.GLASS] = [172, 202, 208, 8];
@@ -1862,10 +1862,7 @@ function render() {
   for (let i = 0, p = 0; i < N; i++, p += 4) {
     const e = cells[i];
     let r, g, b;
-    if (e === E.EMPTY) {
-      const y = (i / W) | 0;
-      r = 12 + y * 0.025; g = 24 + y * 0.04; b = 25 + y * 0.025;
-    } else if (e === E.FIRE) {
+    if (e === E.FIRE) {
       const heat = Math.min(life[i] * 5, 160);
       r = 255; g = 90 + heat + (shade[i] & 31); b = 20 + (heat >> 2);
       if (g > 255) g = 255;
